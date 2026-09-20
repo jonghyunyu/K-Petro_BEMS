@@ -47,7 +47,7 @@ try:
     except gspread.exceptions.WorksheetNotFound:
         ws_2025 = None
 except Exception as e:
-    st.error(f"❌ 구글 시트 연결 실패: {e}")
+    st.error(f"구글 시트 연결 실패: {e}")
     st.stop()
 
 @st.cache_data(ttl=1)
@@ -116,20 +116,20 @@ for hq in HQ_LIST:
 # ---------------- 왼쪽 사이드바 (입력 및 다운로드) ----------------
 with st.sidebar:
     st.image("https://www.kpetro.or.kr/images/kr/common/logo.png", use_container_width=True)
-    st.header("⚙️ 관리자 제어판")
+    st.header("관리자 제어판")
     
-    with st.expander("📝 본부별 실적 직접 입력 (비동기 자동합산)", expanded=True):
+    with st.expander("본부별 실적 직접 입력 (비동기 자동합산)", expanded=True):
         with st.form("data_input_form"):
             input_hq = st.selectbox("본부 선택", HQ_LIST)
             input_month_str = st.selectbox("입력 월", [f"{i}월" for i in range(1, 13)], index=9)
             input_month = int(input_month_str.replace("월", ""))
             
-            input_elec = st.number_input("⚡ 전력 사용량 (입력안함=0)", min_value=0, step=100)
-            input_water = st.number_input("💧 용수 사용량 (입력안함=0)", min_value=0, step=10)
-            input_city_gas = st.number_input("🔥 도시가스 사용량 (입력안함=0)", min_value=0, step=10)
-            input_kerosene = st.number_input("🛢️ 실내등유 사용량 (입력안함=0)", min_value=0, step=10)
+            input_elec = st.number_input("전력 사용량 (입력안함=0)", min_value=0, step=100)
+            input_water = st.number_input("용수 사용량 (입력안함=0)", min_value=0, step=10)
+            input_city_gas = st.number_input("도시가스 사용량 (입력안함=0)", min_value=0, step=10)
+            input_kerosene = st.number_input("실내등유 사용량 (입력안함=0)", min_value=0, step=10)
             
-            submitted = st.form_submit_button("구글 시트로 전송 🚀")
+            submitted = st.form_submit_button("구글 시트로 전송")
             
             if submitted:
                 with st.spinner('DB 저장 중...'):
@@ -155,19 +155,19 @@ with st.sidebar:
                         ws_perf.append_row([2026, input_month, input_hq, input_elec, input_water, input_city_gas, input_kerosene, now_str])
                     
                     st.cache_data.clear()
-                    st.success("✅ DB 저장 완료! 화면을 최신화합니다...")
+                    st.success("DB 저장 완료! 화면을 최신화합니다...")
                     time.sleep(1)
                     st.rerun()
 
     st.divider()
-    st.markdown("### ⏳ 현행화 시뮬레이터")
+    st.markdown("### 현행화 시뮬레이터")
     current_month = st.slider("현재 집계 완료 월:", 1, 12, 10)
     
     st.divider()
-    st.markdown("### 📥 데이터 추출")
+    st.markdown("### 데이터 추출")
     if not df_2026.empty:
         csv_data = df_2026.to_csv(index=False).encode('utf-8-sig')
-        st.download_button(label="📊 2026년 전체 실적 다운로드", data=csv_data, file_name="KPETRO_2026_실적.csv", mime="text/csv")
+        st.download_button(label="2026년 전체 실적 다운로드", data=csv_data, file_name="KPETRO_2026_실적.csv", mime="text/csv")
 
 
 # ---------------- 롤링 연간 예측 계산 ----------------
@@ -197,7 +197,7 @@ annual_data_df = pd.DataFrame(annual_data)
 
 
 # ---------------- 대시보드 메인 화면 ----------------
-st.title("🌿 한국석유관리원 BEMS")
+st.title("한국석유관리원 BEMS 통합 모니터링")
 
 monthly_df = df_2026[df_2026['월'] == current_month] if not df_2026.empty else pd.DataFrame()
 
@@ -208,9 +208,9 @@ ghg_savings_ton = total_monthly_target_ghg - total_monthly_actual_ghg
 if not monthly_df.empty:
     if ghg_savings_ton >= 0:
         pine_trees = int((ghg_savings_ton * 1000) / 6.6)
-        st.success(f"🎉 **{current_month}월 전사 친환경 성과:** 목표 대비 온실가스를 **{ghg_savings_ton:,.1f} ton** 절감했습니다. 이는 **30년생 소나무 {pine_trees:,}그루**를 심은 것과 같은 훌륭한 성과입니다! 🌲")
+        st.success(f"{current_month}월 전사 성과: 목표 대비 온실가스를 {ghg_savings_ton:,.1f} ton 절감했습니다. (소나무 {pine_trees:,}그루 식재 효과)")
     else:
-        st.warning(f"⚠️ **{current_month}월 전사 친환경 알림:** 목표 대비 온실가스 배출량이 **{abs(ghg_savings_ton):,.1f} ton** 초과되었습니다.")
+        st.warning(f"{current_month}월 전사 알림: 목표 대비 온실가스 배출량이 {abs(ghg_savings_ton):,.1f} ton 초과되었습니다.")
 
 def create_gauge(current, target, title, height=280):
     fig = go.Figure(go.Indicator(
@@ -218,29 +218,29 @@ def create_gauge(current, target, title, height=280):
         value = current, 
         domain = {'x': [0, 1], 'y': [0, 1]},
         title = {'text': title, 'font': {'size': 18}},
-        delta = {'reference': target, 'increasing': {'color": "red"}, 'decreasing': {'color": "green"}},
+        delta = {'reference': target, 'increasing': {'color': "red"}, 'decreasing': {'color': "green"}},
         gauge = {
             'axis': {'range': [None, target * 1.2] if target > 0 else [0, 100]},
-            'bar': {'color": "#1f77b4" if target == 0 or (current / target) < 0.9 else "#d62728"},
-            'threshold': {'line': {'color": "red", 'width': 4}, 'thickness': 0.75, 'value': target}
+            'bar': {'color': "#1f77b4" if target == 0 or (current / target) < 0.9 else "#d62728"},
+            'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': target}
         }
     ))
     fig.update_layout(height=height, margin=dict(l=20, r=20, t=40, b=20))
     return fig
 
-st.subheader(f"🏢 전사 통합 목표 대비 사용률 ({current_month}월 단일)")
+st.subheader(f"전사 통합 목표 대비 사용률 ({current_month}월 단일)")
 top_col1, top_col2, top_col3 = st.columns(3)
 
 total_tg_elec = sum([target_dict[hq]['elec'] for hq in HQ_LIST]) / 12
 total_tg_water = sum([target_dict[hq]['water'] for hq in HQ_LIST]) / 12
 
-with top_col1: st.plotly_chart(create_gauge(total_monthly_actual_ghg, total_monthly_target_ghg, "전사 온실가스(tCO2eq) 월간목표", height=320), use_container_width=True, key="top_gauge_ghg")
-with top_col2: st.plotly_chart(create_gauge(monthly_df['전력사용량(kWh)'].sum() if not monthly_df.empty and '전력사용량(kWh)' in monthly_df.columns else 0, total_tg_elec, "전사 전력(kWh) 월간목표", height=320), use_container_width=True, key="top_gauge_elec")
-with top_col3: st.plotly_chart(create_gauge(monthly_df['용수사용량(ton)'].sum() if not monthly_df.empty and '용수사용량(ton)' in monthly_df.columns else 0, total_tg_water, "전사 용수(ton) 월간목표", height=320), use_container_width=True, key="top_gauge_water")
+with top_col1: st.plotly_chart(create_gauge(total_monthly_actual_ghg, total_monthly_target_ghg, "전사 온실가스 월간목표", height=320), use_container_width=True, key="top_gauge_ghg")
+with top_col2: st.plotly_chart(create_gauge(monthly_df['전력사용량(kWh)'].sum() if not monthly_df.empty and '전력사용량(kWh)' in monthly_df.columns else 0, total_tg_elec, "전사 전력 월간목표", height=320), use_container_width=True, key="top_gauge_elec")
+with top_col3: st.plotly_chart(create_gauge(monthly_df['용수사용량(ton)'].sum() if not monthly_df.empty and '용수사용량(ton)' in monthly_df.columns else 0, total_tg_water, "전사 용수 월간목표", height=320), use_container_width=True, key="top_gauge_water")
 
 st.markdown("---")
-st.subheader("📍 본부별 세부 현황 및 연간 실적 예측")
-tab1, tab2, tab3, tab4 = st.tabs(["🌍 온실가스", "⚡ 전력", "💧 용수", "🎯 연간 실적 예측 (현행화 반영)"])
+st.subheader("본부별 세부 현황 및 연간 실적 예측")
+tab1, tab2, tab3, tab4 = st.tabs(["온실가스", "전력", "용수", "연간 실적 예측"])
 
 for tab, metric_col, tg_key in zip([tab1, tab2, tab3], ['온실가스(tCO2eq)', '전력사용량(kWh)', '용수사용량(ton)'], ['ghg', 'elec', 'water']):
     with tab:
@@ -251,7 +251,7 @@ for tab, metric_col, tg_key in zip([tab1, tab2, tab3], ['온실가스(tCO2eq)', 
             with cols[i % 3]: st.plotly_chart(create_gauge(val, tg_val, f"[{hq}]"), use_container_width=True, key=f"gauge_{metric_col}_{hq}")
 
 with tab4:
-    st.markdown("##### 📈 2026년 연말 예상 실적 (과거 데이터 추세 반영)")
+    st.markdown("##### 2026년 연말 예상 실적 비교")
     selected_metric = st.selectbox("분석할 지표를 선택하세요:", ["온실가스", "전력사용량", "용수사용량"], key="forecast_selectbox")
     
     chart_df = annual_data_df[annual_data_df['지표'] == selected_metric] if not annual_data_df.empty and '지표' in annual_data_df.columns else pd.DataFrame()
@@ -264,11 +264,11 @@ with tab4:
         fig_bar.update_layout(barmode='group', title=f"본부별 연간 예상 실적 비교 (기준: {current_month}월)", height=400)
         st.plotly_chart(fig_bar, use_container_width=True, key="annual_forecast_barchart")
 
-# ---------------- 🔧 실시간 데이터 연동 진단 패널 ----------------
-with st.expander("🔍 [디버그] 구글 시트 연동 상태 실시간 확인", expanded=True):
-    st.write(f"**1. 구글 시트(`월간실적`)에서 불러온 원본 레코드 개수:** {len(raw_2026_records)}개")
-    st.write(f"**2. 2026년 연도 필터링 후 데이터 개수 (`df_2026`):** {len(df_2026)}개")
+# ---------------- 실시간 데이터 연동 진단 패널 ----------------
+with st.expander("구글 시트 연동 상태 실시간 확인", expanded=True):
+    st.write(f"1. 구글 시트(월간실적) 원본 레코드 개수: {len(raw_2026_records)}개")
+    st.write(f"2. 2026년 연도 필터링 후 데이터 개수: {len(df_2026)}개")
     if not df_2026.empty:
         st.dataframe(df_2026)
     else:
-        st.warning("⚠️ 2026년 데이터가 필터링되지 않았거나 비어 있습니다. 구글 시트의 '연도' 컬럼 값(2026)이나 시트 이름을 확인해 주세요.")
+        st.warning("2026년 데이터가 필터링되지 않았거나 비어 있습니다.")
