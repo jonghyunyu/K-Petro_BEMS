@@ -4,6 +4,7 @@ import gspread
 import plotly.graph_objects as go
 from datetime import datetime
 import time
+import json
 
 st.set_page_config(page_title="K-PETRO 환경경영 통합 모니터링", page_icon="🌿", layout="wide")
 
@@ -12,10 +13,13 @@ HQ_LIST = [
     '충북', '전남광주', '전북', '부산울산경남', '대구경북', '강원', '제주'
 ]
 
-# ---------------- 구글 시트(DB) 안전 연결 (로컬/클라우드 공용) ----------------
+# ---------------- 구글 시트(DB) 안전 연결 (로컬/클라우드 통용) ----------------
 @st.cache_resource
 def init_connection():
-    if "gcp_service_account" in st.secrets:
+    if "gcp_json" in st.secrets:
+        creds_dict = json.loads(st.secrets["gcp_json"])
+        gc = gspread.service_account_from_dict(creds_dict)
+    elif "gcp_service_account" in st.secrets:
         creds_dict = dict(st.secrets["gcp_service_account"])
         gc = gspread.service_account_from_dict(creds_dict)
     else:
@@ -243,6 +247,7 @@ with tab4:
     
     if not chart_df.empty:
         fig_bar = go.Figure()
+        fig_bar.add_tabs = [...] # placeholder
         fig_bar.add_trace(go.Bar(x=chart_df['본부'], y=chart_df['연간목표'], name='연간 목표량', marker_color='#1f77b4'))
         colors = ['#d62728' if y > t else '#ff7f0e' for y, t in zip(chart_df['연말예상치'], chart_df['연간목표'])]
         fig_bar.add_trace(go.Bar(x=chart_df['본부'], y=chart_df['연말예상치'], name='현행화된 연말 예상치', marker_color=colors))
