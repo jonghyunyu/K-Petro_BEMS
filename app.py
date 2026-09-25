@@ -20,11 +20,11 @@ def init_connection():
     return client
 
 client = init_connection()
-sheet_url = "K-Petro_BEMS_DB" # 구글 시트 파일 이름
+sheet_id = "1Ky6Brrh5pWXuDvAXV36SSQ2MBAjtxr__UbY8fU3viBY" # 구글 시트 고유 ID
 
 @st.cache_data(ttl=60)
 def load_data():
-    doc = client.open(sheet_url)
+    doc = client.open_by_key(sheet_id)
     
     # 목표치 데이터 로드
     ws_target = doc.worksheet("목표치관리")
