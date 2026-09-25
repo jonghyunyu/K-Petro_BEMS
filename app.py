@@ -11,7 +11,7 @@ import plotly.express as px
 st.set_page_config(page_title="K-PETRO BEMS 통합 모니터링", page_icon="📊", layout="wide")
 
 # -----------------------------------------------------------------------------
-# 2. 데이터 로드 및 전처리 (문자열 -> 숫자 강제 변환)
+# 2. 데이터 로드 및 전처리
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60)
 def load_data():
@@ -22,7 +22,7 @@ def load_data():
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
     client = gspread.authorize(creds)
     
-    # 드라이브 권한 에러 방지를 위한 구글 시트 고유 ID 직접 참조
+    # 드라이브 권한 에러 방지를 위한 구글 시트 고유 ID 참조
     sheet_id = "1Ky6Brrh5pWXuDvAXV36SSQ2MBAjtxr__UbY8fU3viBY"
     doc = client.open_by_key(sheet_id)
     
@@ -48,16 +48,19 @@ except Exception as e:
     st.stop()
 
 # -----------------------------------------------------------------------------
-# 3. 사이드바 (월 선택) 및 누적 데이터 필터링
+# 3. 사이드바 (월 선택) 및 누적 데이터 필터링 (에러 원천 차단)
 # -----------------------------------------------------------------------------
 st.sidebar.header("데이터 조회 월 선택")
 month_list = [f"{i}월" for i in range(1, 13)]
 selected_month = st.sidebar.selectbox("월 선택", month_list, index=8) # 기본값 9월
 
-# '월' 컬럼에서 숫자만 추출하여 필터링 적용
-df_actual['월_num'] = df_actual['월'].astype(str).str.replace('월', '').astype(int)
+# [핵심 수정] '월' 컬럼에 섞인 빈칸, '합계' 등 문자열 에러를 무시하고 안전하게 숫자로 변환
+df_actual['월_num'] = pd.to_numeric(df_actual['월'].astype(str).str.replace('월', '').str.strip(), errors='coerce').fillna(0).astype(int)
+
 sel_month_num = int(selected_month.replace('월', ''))
-df_filtered = df_actual[df_actual['월_num'] <= sel_month_num]
+
+# 0이 아닌 정상적인 월 데이터만 필터링 (엑셀의 빈 줄이나 합계 행 배제)
+df_filtered = df_actual[(df_actual['월_num'] > 0) & (df_actual['월_num'] <= sel_month_num)]
 
 # -----------------------------------------------------------------------------
 # 4. 데이터 연산 (종합 실적 - 필터링된 누적 데이터 기준)
@@ -92,7 +95,6 @@ st.markdown("---")
 # [UI 파트 2] 목표 달성률 게이지 차트
 st.subheader("🎯 2026년 연간 목표 대비 달성률")
 
-# 목표치 자동 합산 (없을 경우 임의 기준점 생성)
 target_elec = int(df_target.get('전력사용량', 0).sum()) if '전력사용량' in df_target.columns else (total_elec * 1.5 if total_elec > 0 else 100000)
 target_ghg = int(df_target.get('온실가스', 0).sum()) if '온실가스' in df_target.columns else (total_ghg * 1.5 if total_ghg > 0 else 50)
 
@@ -124,8 +126,11 @@ st.markdown("---")
 
 # [UI 파트 3] 월별 실적 추이 바 차트
 st.subheader("📈 월별 실적 추이")
-df_monthly = df_actual.groupby('월_num')[['전력사용량']].sum().reset_index()
+# 그래프 그릴 때 0으로 처리된 빈칸/합계 행 제외
+df_monthly = df_actual[df_actual['월_num'] > 0].groupby('월_num')[['전력사용량']].sum().reset_index()
 fig_bar = px.bar(df_monthly, x='월_num', y='전력사용량', title="월별 누적 전력사용량 (kWh)", text_auto='.0f')
+# X축 간격을 무조건 1단위 정수로 강제 고정 (소수점 표시 방지)
+fig_bar.update_layout(xaxis=dict(tickmode='linear', dtick=1))
 fig_bar.update_traces(marker_color='#1E90FF')
 st.plotly_chart(fig_bar, use_container_width=True)
 
@@ -134,7 +139,6 @@ st.markdown("---")
 # [UI 파트 4] 지역(본부/지사)별 세부 탭
 st.subheader("🏢 각 본부별 세부 실적")
 
-# 엑셀 파일 내 지역 구분 컬럼명 자동 탐지
 possible_cols = ['본부', '지사', '사업장', '구분', '지역']
 group_col = next((c for c in possible_cols if c in df_actual.columns), None)
 
