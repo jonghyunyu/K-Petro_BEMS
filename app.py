@@ -27,7 +27,6 @@ def get_client():
 
 SHEET_ID = "1Ky6Brrh5pWXuDvAXV36SSQ2MBAjtxr__UbY8fU3viBY"
 
-# 이미지를 안전하게 불러오기 위한 Base64 인코딩 함수 (여러 파일명 대응)
 def get_image_base64(filenames):
     for fname in filenames:
         if os.path.exists(fname):
@@ -143,7 +142,7 @@ ghg_reduction_display = ghg_reduction if ghg_reduction > 0 else 0
 pine_trees = int(ghg_reduction_display * 6.6)
 
 # -----------------------------------------------------------------------------
-# 5. 커스텀 반원 게이지 차트
+# 5. 커스텀 반원 게이지 차트 (50% 노란색, 90% 빨간색 마커 바 적용)
 # -----------------------------------------------------------------------------
 def make_gauge(val, target, title, unit, is_forecast=False):
     if target <= 0: target = val * 1.2 if val > 0 else 100
@@ -171,7 +170,11 @@ def make_gauge(val, target, title, unit, is_forecast=False):
             'axis': {'range': [0, target], 'tickwidth': 1, 'tickcolor': "darkblue"},
             'bar': {'color': "#1E90FF"},
             'bgcolor': "#E0E0E0",
-            'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.8, 'value': target}
+            # 기존 빨간선(threshold) 삭제, 대신 50%와 90% 위치에 얇은 스텝(경계선 바) 추가
+            'steps': [
+                {'range': [target * 0.495, target * 0.505], 'color': "#FFC107"}, # 50% 노란색 바
+                {'range': [target * 0.895, target * 0.905], 'color': "#FF3B30"}  # 90% 빨간색 바
+            ]
         }
     ))
     
@@ -189,19 +192,19 @@ def make_gauge(val, target, title, unit, is_forecast=False):
 # -----------------------------------------------------------------------------
 # 6. 메인 화면 UI
 # -----------------------------------------------------------------------------
-# 💡 [핵심] 유반장 원본 우측 배치 및 로고 인식 강화
-logo_b64 = get_image_base64(["코퍼레이트_심볼.jpg", "코퍼레이트_심볼_2.jpg", "코퍼레이트_심볼.png"])
+# 타이틀(48px)과 유반장(44px) 크기 조정 및 배치
+logo_b64 = get_image_base64(["코퍼레이트_심볼_2.jpg", "코퍼레이트_심볼.jpg", "코퍼레이트_심볼.png"])
 yubanjang_b64 = get_image_base64(["유반장.jpg", "유반장.png"])
 
-logo_html = f'<img src="data:image/jpeg;base64,{logo_b64}" style="height: 55px; margin-right: 15px;">' if logo_b64 else f"<span style='font-size: 45px; font-weight: 900; color: {KPETRO_GREEN};'>K-PETRO</span>"
-yubanjang_html = f'<img src="data:image/jpeg;base64,{yubanjang_b64}" style="height: 80px; object-fit: contain;">' if yubanjang_b64 else ""
+logo_html = f'<img src="data:image/jpeg;base64,{logo_b64}" style="height: 48px; margin-right: 15px;">' if logo_b64 else f"<span style='font-size: 48px; font-weight: 900; color: {KPETRO_GREEN};'>K-PETRO</span>"
+yubanjang_html = f'<img src="data:image/jpeg;base64,{yubanjang_b64}" style="height: 44px; object-fit: contain;">' if yubanjang_b64 else ""
 
 st.markdown(f"""
 <div style='display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 40px;'>
     <div style='flex: 1;'></div> <!-- 좌측 여백 -->
     <div style='flex: 2; display: flex; justify-content: center; align-items: center;'>
         {logo_html}
-        <span style='font-size: 45px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -2px;'> BEMS 통합 모니터링</span>
+        <span style='font-size: 48px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -2px;'> BEMS 통합 모니터링</span>
     </div>
     <div style='flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 20px;'>
         {yubanjang_html}
@@ -372,7 +375,6 @@ with tab4:
     with f_tab3:
         render_forecast_grid("WATER", "forecast_water")
 
-# 하단 저작권 표시
 st.markdown(f"""
 <hr style='border: 1px solid #E0E0E0; margin-top: 50px;'>
 <div style='text-align: center; color: #888888; font-size: 14px; padding-bottom: 20px;'>
