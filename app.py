@@ -11,7 +11,7 @@ import plotly.express as px
 st.set_page_config(page_title="K-PETRO BEMS 통합 모니터링", page_icon="📊", layout="wide")
 
 # -----------------------------------------------------------------------------
-# 2. 데이터 로드 및 전처리
+# 2. 데이터 로드 및 전처리 (안정성 롤백)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60)
 def load_data():
@@ -29,12 +29,12 @@ def load_data():
     df_2025 = pd.DataFrame(doc.worksheet("2025실적").get_all_records())
     df_target = pd.DataFrame(doc.worksheet("목표치관리").get_all_records())
     
-    # 숫자 변환 에러 방지 (문자열 컬럼 자동 탐지)
+    # 확실한 예외 컬럼 지정 방식으로 복구 (invalid error 원천 차단)
+    exclude_cols = ['월', '구분', '날짜', '지사', '본부', '지역', '사업장'] 
     for df in [df_actual, df_2025, df_target]:
         for col in df.columns:
-            if df[col].dtype == 'object':
-                # 숫자로 변환 가능한 것만 변환, 안되면 그대로 두기
-                df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', ''), errors='ignore')
+            if col not in exclude_cols:
+                df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                 
     return df_actual, df_2025, df_target
 
@@ -45,19 +45,17 @@ except Exception as e:
     st.stop()
 
 # -----------------------------------------------------------------------------
-# 3. 사이드바 (관리자 제어판 & 시뮬레이터 롤백)
+# 3. 사이드바 (관리자 제어판 & 시뮬레이터)
 # -----------------------------------------------------------------------------
-# (1) 관리자 제어판
 with st.sidebar.expander("⚙️ 관리자 제어판 (본부별 실적입력)", expanded=True):
     st.markdown("해당월 및 본부를 선택하여 데이터를 입력합니다.")
     input_month = st.selectbox("입력 대상 월", [f"{i}월" for i in range(1, 13)])
     
-    # 엑셀의 지역/본부 컬럼 자동 탐지 (텍스트 형식인 컬럼 찾기)
-    cat_cols = [c for c in df_actual.columns if df_actual[c].dtype == 'object' and c not in ['월', '날짜']]
+    cat_cols = [c for c in ['본부', '지사', '사업장', '구분', '지역'] if c in df_actual.columns]
     group_col = cat_cols[0] if cat_cols else None
     
     if group_col:
-        hq_list = df_actual[group_col].dropna().unique().tolist()
+        hq_list = [x for x in df_actual[group_col].unique() if str(x).strip() != '']
         input_hq = st.selectbox("본부(지사) 선택", hq_list)
     else:
         st.warning("지역 데이터를 찾을 수 없습니다.")
@@ -71,12 +69,10 @@ with st.sidebar.expander("⚙️ 관리자 제어판 (본부별 실적입력)", 
 
 st.sidebar.markdown("---")
 
-# (2) 실적달성 시뮬레이터
 st.sidebar.header("📈 실적달성 시뮬레이터")
 month_list = [f"{i}월" for i in range(1, 13)]
-selected_month = st.sidebar.selectbox("현재 집계 완료(월)", month_list, index=8) # 기본 9월
+selected_month = st.sidebar.selectbox("현재 집계 완료(월)", month_list, index=8)
 
-# 선택 월 누적 필터링
 sel_month_num = int(selected_month.replace('월', ''))
 if '월' in df_actual.columns:
     df_actual['월_num'] = pd.to_numeric(df_actual['월'].astype(str).str.replace('월', '').str.strip(), errors='coerce').fillna(0).astype(int)
@@ -87,19 +83,18 @@ else:
 # -----------------------------------------------------------------------------
 # 4. 연산 및 팝업 (소나무 상쇄 효과)
 # -----------------------------------------------------------------------------
-total_elec = int(pd.to_numeric(df_filtered.get('전력사용량', 0), errors='coerce').sum())
-total_ghg = int(pd.to_numeric(df_filtered.get('온실가스', 0), errors='coerce').sum()) if '온실가스' in df_filtered.columns else int(total_elec * 0.4781 / 1000)
-total_water = int(pd.to_numeric(df_filtered.get('용수사용량', 0), errors='coerce').sum())
+total_elec = int(df_filtered['전력사용량'].sum()) if '전력사용량' in df_filtered.columns else 0
+total_ghg = int(df_filtered['온실가스'].sum()) if '온실가스' in df_filtered.columns else int(total_elec * 0.4781 / 1000)
+total_water = int(df_filtered['용수사용량'].sum()) if '용수사용량' in df_filtered.columns else 0
 
 pine_trees = int(total_ghg * 6.6)
 st.toast(f"🌲 2026년 {selected_month} 현재 목표 대비 소나무 상쇄 효과: {pine_trees:,.0f} 그루", icon="🌲")
 
 # -----------------------------------------------------------------------------
-# 5. 메인 화면 UI (탭 구조 원복)
+# 5. 메인 화면 UI (탭 구조)
 # -----------------------------------------------------------------------------
 st.title("📊 K-PETRO BEMS 통합 모니터링")
 
-# 상단 요약 지표
 st.subheader(f"💡 K-PETRO 통합 실적 (누계 - {selected_month} 기준)")
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("총 전력사용량", f"{total_elec:,.0f} kWh")
@@ -109,10 +104,8 @@ col4.metric("소나무 상쇄 효과", f"{pine_trees:,.0f} 그루")
 
 st.markdown("---")
 
-# 탭 메뉴 구성
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎯 전본부 목표 대비 실적현황", "⚡ 전력사용량", "☁️ 온실가스 배출량", "💧 용수사용량", "📈 연간 달성 예측치"])
 
-# 반원형 게이지 차트 생성 함수
 def make_gauge(val, target, title, unit):
     if target <= 0: target = val * 1.2 if val > 0 else 100
     remaining = target - val
@@ -135,12 +128,10 @@ def make_gauge(val, target, title, unit):
     fig.update_layout(height=350, margin=dict(l=10, r=10, t=70, b=10))
     return fig
 
-# 목표치 합산 연산
-target_elec = int(pd.to_numeric(df_target.get('전력사용량', 0), errors='coerce').sum()) if '전력사용량' in df_target.columns else 100000
-target_ghg = int(pd.to_numeric(df_target.get('온실가스', 0), errors='coerce').sum()) if '온실가스' in df_target.columns else 50000
-target_water = int(pd.to_numeric(df_target.get('용수사용량', 0), errors='coerce').sum()) if '용수사용량' in df_target.columns else 10000
+target_elec = int(df_target['전력사용량'].sum()) if '전력사용량' in df_target.columns else 100000
+target_ghg = int(df_target['온실가스'].sum()) if '온실가스' in df_target.columns else 50000
+target_water = int(df_target['용수사용량'].sum()) if '용수사용량' in df_target.columns else 10000
 
-# [탭 1] 전본부 목표 대비 실적현황 (반원형 3대 그래프)
 with tab1:
     st.subheader(f"전본부 목표 대비 실적현황 ({selected_month} 누적 기준)")
     g_col1, g_col2, g_col3 = st.columns(3)
@@ -148,7 +139,6 @@ with tab1:
     with g_col2: st.plotly_chart(make_gauge(total_ghg, target_ghg, "온실가스 배출량", "tCO2eq"), use_container_width=True)
     with g_col3: st.plotly_chart(make_gauge(total_water, target_water, "용수사용량", "ton"), use_container_width=True)
 
-# [탭 2,3,4] 각 항목별 월별 추이 차트
 with tab2:
     st.subheader(f"⚡ 전력사용량 월별 추이 (누계 - {selected_month})")
     df_monthly = df_actual[df_actual['월_num'] > 0].groupby('월_num')[['전력사용량']].sum(numeric_only=True).reset_index()
@@ -158,47 +148,50 @@ with tab2:
 
 with tab3:
     st.subheader(f"☁️ 온실가스 배출량 월별 추이 (누계 - {selected_month})")
-    df_monthly = df_actual[df_actual['월_num'] > 0].groupby('월_num')[['온실가스']].sum(numeric_only=True).reset_index()
-    fig_ghg = px.bar(df_monthly, x='월_num', y='온실가스', text_auto='.0f')
-    fig_ghg.update_layout(xaxis=dict(tickmode='linear', dtick=1))
-    st.plotly_chart(fig_ghg, use_container_width=True)
+    if '온실가스' in df_actual.columns:
+        df_monthly = df_actual[df_actual['월_num'] > 0].groupby('월_num')[['온실가스']].sum(numeric_only=True).reset_index()
+        fig_ghg = px.bar(df_monthly, x='월_num', y='온실가스', text_auto='.0f')
+        fig_ghg.update_layout(xaxis=dict(tickmode='linear', dtick=1))
+        st.plotly_chart(fig_ghg, use_container_width=True)
 
 with tab4:
     st.subheader(f"💧 용수사용량 월별 추이 (누계 - {selected_month})")
-    df_monthly = df_actual[df_actual['월_num'] > 0].groupby('월_num')[['용수사용량']].sum(numeric_only=True).reset_index()
-    fig_water = px.bar(df_monthly, x='월_num', y='용수사용량', text_auto='.0f')
-    fig_water.update_layout(xaxis=dict(tickmode='linear', dtick=1))
-    st.plotly_chart(fig_water, use_container_width=True)
+    if '용수사용량' in df_actual.columns:
+        df_monthly = df_actual[df_actual['월_num'] > 0].groupby('월_num')[['용수사용량']].sum(numeric_only=True).reset_index()
+        fig_water = px.bar(df_monthly, x='월_num', y='용수사용량', text_auto='.0f')
+        fig_water.update_layout(xaxis=dict(tickmode='linear', dtick=1))
+        st.plotly_chart(fig_water, use_container_width=True)
 
-# [탭 5] 연간 달성 예측치 (본부별 세부 데이터 및 게이지 연동)
 with tab5:
     st.subheader("본부별 세부 현황 및 연간 실적 예측")
     if group_col:
         df_grouped = df_filtered.groupby(group_col).sum(numeric_only=True).reset_index()
         df_target_grouped = df_target.groupby(group_col).sum(numeric_only=True).reset_index() if group_col in df_target.columns else pd.DataFrame()
         
-        inner_tabs = st.tabs(df_grouped[group_col].astype(str).tolist())
-        
-        for idx, row in df_grouped.iterrows():
-            hq_name = row[group_col]
-            with inner_tabs[idx]:
-                r_elec = int(row.get('전력사용량', 0))
-                r_ghg = int(row.get('온실가스', (r_elec * 0.4781 / 1000)))
-                r_water = int(row.get('용수사용량', 0))
-                
-                # 목표치 매칭
-                if not df_target_grouped.empty and hq_name in df_target_grouped[group_col].values:
-                    t_row = df_target_grouped[df_target_grouped[group_col] == hq_name].iloc[0]
-                    t_elec = int(t_row.get('전력사용량', r_elec * 1.5))
-                    t_ghg = int(t_row.get('온실가스', r_ghg * 1.5))
-                    t_water = int(t_row.get('용수사용량', r_water * 1.5))
-                else:
-                    t_elec, t_ghg, t_water = r_elec * 1.5, r_ghg * 1.5, r_water * 1.5
-                
-                # 본부별 반원 그래프
-                r_col1, r_col2, r_col3 = st.columns(3)
-                with r_col1: st.plotly_chart(make_gauge(r_elec, t_elec, f"[{hq_name}] 전력사용량", "kWh"), use_container_width=True)
-                with r_col2: st.plotly_chart(make_gauge(r_ghg, t_ghg, f"[{hq_name}] 온실가스 배출량", "tCO2eq"), use_container_width=True)
-                with r_col3: st.plotly_chart(make_gauge(r_water, t_water, f"[{hq_name}] 용수사용량", "ton"), use_container_width=True)
+        valid_hqs = [hq for hq in df_grouped[group_col].astype(str).tolist() if hq.strip() != '0' and hq.strip() != '']
+        if valid_hqs:
+            inner_tabs = st.tabs(valid_hqs)
+            
+            for idx, hq_name in enumerate(valid_hqs):
+                with inner_tabs[idx]:
+                    row = df_grouped[df_grouped[group_col].astype(str) == hq_name].iloc[0]
+                    r_elec = int(row.get('전력사용량', 0))
+                    r_ghg = int(row.get('온실가스', (r_elec * 0.4781 / 1000)))
+                    r_water = int(row.get('용수사용량', 0))
+                    
+                    if not df_target_grouped.empty and hq_name in df_target_grouped[group_col].values:
+                        t_row = df_target_grouped[df_target_grouped[group_col] == hq_name].iloc[0]
+                        t_elec = int(t_row.get('전력사용량', r_elec * 1.5))
+                        t_ghg = int(t_row.get('온실가스', r_ghg * 1.5))
+                        t_water = int(t_row.get('용수사용량', r_water * 1.5))
+                    else:
+                        t_elec, t_ghg, t_water = r_elec * 1.5, r_ghg * 1.5, r_water * 1.5
+                    
+                    r_col1, r_col2, r_col3 = st.columns(3)
+                    with r_col1: st.plotly_chart(make_gauge(r_elec, t_elec, f"[{hq_name}] 전력사용량", "kWh"), use_container_width=True)
+                    with r_col2: st.plotly_chart(make_gauge(r_ghg, t_ghg, f"[{hq_name}] 온실가스 배출량", "tCO2eq"), use_container_width=True)
+                    with r_col3: st.plotly_chart(make_gauge(r_water, t_water, f"[{hq_name}] 용수사용량", "ton"), use_container_width=True)
+        else:
+            st.info("표시할 본부별 데이터가 없습니다.")
     else:
         st.warning("데이터 내 지역 구분 기준(본부/지사)을 찾을 수 없습니다.")
