@@ -27,11 +27,13 @@ def get_client():
 
 SHEET_ID = "1Ky6Brrh5pWXuDvAXV36SSQ2MBAjtxr__UbY8fU3viBY"
 
-# 로컬 이미지를 웹 브라우저에 직접 띄우기 위한 Base64 인코딩 함수
-def get_image_base64(filepath):
-    with open(filepath, "rb") as f:
-        data = f.read()
-    return base64.b64encode(data).decode()
+# 이미지를 안전하게 불러오기 위한 Base64 인코딩 함수 (여러 파일명 대응)
+def get_image_base64(filenames):
+    for fname in filenames:
+        if os.path.exists(fname):
+            with open(fname, "rb") as f:
+                return base64.b64encode(f.read()).decode()
+    return None
 
 # -----------------------------------------------------------------------------
 # 2. 데이터 로드 및 전처리
@@ -118,19 +120,6 @@ else:
 if not df_2025.empty and '월' in df_2025.columns:
     df_2025['월_num'] = pd.to_numeric(df_2025['월'].astype(str).str.replace('월', '').str.strip(), errors='coerce').fillna(0).astype(int)
 
-# 💡 [유반장 추가] 사이드바 하단에 티 안 나게 은은하게 배치
-try:
-    if os.path.exists("유반장.jpg"):
-        yubanjang_b64 = get_image_base64("유반장.jpg")
-        st.sidebar.markdown(f"""
-        <div style='text-align: center; margin-top: 60px; opacity: 0.4;'>
-            <img src="data:image/jpeg;base64,{yubanjang_b64}" style="width: 70px; mix-blend-mode: multiply;">
-            <p style='font-size: 11px; color: #888; margin-top: 5px;'>에너지 지킴이 유반장</p>
-        </div>
-        """, unsafe_allow_html=True)
-except Exception:
-    pass
-
 # -----------------------------------------------------------------------------
 # 4. 연산 
 # -----------------------------------------------------------------------------
@@ -154,7 +143,7 @@ ghg_reduction_display = ghg_reduction if ghg_reduction > 0 else 0
 pine_trees = int(ghg_reduction_display * 6.6)
 
 # -----------------------------------------------------------------------------
-# 5. 파란색으로 롤백된 커스텀 반원 게이지 차트
+# 5. 커스텀 반원 게이지 차트
 # -----------------------------------------------------------------------------
 def make_gauge(val, target, title, unit, is_forecast=False):
     if target <= 0: target = val * 1.2 if val > 0 else 100
@@ -180,7 +169,7 @@ def make_gauge(val, target, title, unit, is_forecast=False):
         title = {'text': f"<b>{title}</b>", 'font': {'size': 26, 'color': KPETRO_GRAY}},
         gauge = {
             'axis': {'range': [0, target], 'tickwidth': 1, 'tickcolor': "darkblue"},
-            'bar': {'color': "#1E90FF"}, # 다시 시원한 파란색으로 롤백
+            'bar': {'color': "#1E90FF"},
             'bgcolor': "#E0E0E0",
             'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.8, 'value': target}
         }
@@ -200,22 +189,25 @@ def make_gauge(val, target, title, unit, is_forecast=False):
 # -----------------------------------------------------------------------------
 # 6. 메인 화면 UI
 # -----------------------------------------------------------------------------
-# 💡 [메인 타이틀 수정] 텍스트 대신 '코퍼레이트_심볼.jpg'를 직접 띄워서 K 끝부분 녹색 완벽 구현
-try:
-    if os.path.exists("코퍼레이트_심볼_2.jpg"):
-        logo_b64 = get_image_base64("코퍼레이트_심볼.jpg")
-        title_html = f"""
-        <div style='display: flex; justify-content: center; align-items: center; margin-top: 10px; margin-bottom: 40px;'>
-            <img src="data:image/jpeg;base64,{logo_b64}" style="height: 55px; margin-right: 15px;">
-            <span style='font-size: 45px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -2px;'> BEMS 통합 모니터링</span>
-        </div>
-        """
-    else:
-        title_html = f"<h1 style='text-align:center; color:{KPETRO_GRAY};'>K-PETRO BEMS 통합 모니터링</h1>"
-except Exception:
-    title_html = f"<h1 style='text-align:center; color:{KPETRO_GRAY};'>K-PETRO BEMS 통합 모니터링</h1>"
+# 💡 [핵심] 유반장 원본 우측 배치 및 로고 인식 강화
+logo_b64 = get_image_base64(["코퍼레이트_심볼.jpg", "코퍼레이트_심볼_2.jpg", "코퍼레이트_심볼.png"])
+yubanjang_b64 = get_image_base64(["유반장.jpg", "유반장.png"])
 
-st.markdown(title_html, unsafe_allow_html=True)
+logo_html = f'<img src="data:image/jpeg;base64,{logo_b64}" style="height: 55px; margin-right: 15px;">' if logo_b64 else f"<span style='font-size: 45px; font-weight: 900; color: {KPETRO_GREEN};'>K-PETRO</span>"
+yubanjang_html = f'<img src="data:image/jpeg;base64,{yubanjang_b64}" style="height: 80px; object-fit: contain;">' if yubanjang_b64 else ""
+
+st.markdown(f"""
+<div style='display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 40px;'>
+    <div style='flex: 1;'></div> <!-- 좌측 여백 -->
+    <div style='flex: 2; display: flex; justify-content: center; align-items: center;'>
+        {logo_html}
+        <span style='font-size: 45px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -2px;'> BEMS 통합 모니터링</span>
+    </div>
+    <div style='flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 20px;'>
+        {yubanjang_html}
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 st.subheader(f"💡 K-PETRO 통합 실적 (누계 - {selected_month} 기준)")
 
@@ -380,7 +372,7 @@ with tab4:
     with f_tab3:
         render_forecast_grid("WATER", "forecast_water")
 
-# 하단 저작권 (Copyright) 표시
+# 하단 저작권 표시
 st.markdown(f"""
 <hr style='border: 1px solid #E0E0E0; margin-top: 50px;'>
 <div style='text-align: center; color: #888888; font-size: 14px; padding-bottom: 20px;'>
