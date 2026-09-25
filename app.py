@@ -6,13 +6,14 @@ import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime
 import os
+import base64
 
 # -----------------------------------------------------------------------------
 # 1. 페이지 기본 설정 및 구글 API 클라이언트 연결
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="K-PETRO BEMS 통합 모니터링", page_icon="🏢", layout="wide")
 
-# K-PETRO CI Official Colors (Pantone 376C & Pantone 425C)
+# K-PETRO CI Official Colors
 KPETRO_GREEN = "#8CC63F"
 KPETRO_GRAY = "#54585A"
 
@@ -25,6 +26,12 @@ def get_client():
     return gspread.authorize(creds)
 
 SHEET_ID = "1Ky6Brrh5pWXuDvAXV36SSQ2MBAjtxr__UbY8fU3viBY"
+
+# 로컬 이미지를 웹 브라우저에 직접 띄우기 위한 Base64 인코딩 함수
+def get_image_base64(filepath):
+    with open(filepath, "rb") as f:
+        data = f.read()
+    return base64.b64encode(data).decode()
 
 # -----------------------------------------------------------------------------
 # 2. 데이터 로드 및 전처리
@@ -64,13 +71,8 @@ else:
     hq_list = target_order
 
 # -----------------------------------------------------------------------------
-# 3. 사이드바 (코퍼레이트 심볼 적용 및 제어판)
+# 3. 사이드바 (실적 직접 입력 제어판 & 시뮬레이터)
 # -----------------------------------------------------------------------------
-# 사이드바 상단 K-PETRO 로고 이미지 삽입
-if os.path.exists("코퍼레이트_심볼.jpg"):
-    st.sidebar.image("코퍼레이트_심볼.jpg", use_column_width=True)
-    st.sidebar.markdown("<br>", unsafe_allow_html=True)
-
 with st.sidebar.expander("⚙️ 관리자 제어판 (본부별 실적입력)", expanded=True):
     st.markdown("웹에서 실적을 입력하면 구글 DB에 실시간 연동됩니다.")
     with st.form("data_input_form", clear_on_submit=True):
@@ -116,6 +118,19 @@ else:
 if not df_2025.empty and '월' in df_2025.columns:
     df_2025['월_num'] = pd.to_numeric(df_2025['월'].astype(str).str.replace('월', '').str.strip(), errors='coerce').fillna(0).astype(int)
 
+# 💡 [유반장 추가] 사이드바 하단에 티 안 나게 은은하게 배치
+try:
+    if os.path.exists("유반장.jpg"):
+        yubanjang_b64 = get_image_base64("유반장.jpg")
+        st.sidebar.markdown(f"""
+        <div style='text-align: center; margin-top: 60px; opacity: 0.4;'>
+            <img src="data:image/jpeg;base64,{yubanjang_b64}" style="width: 70px; mix-blend-mode: multiply;">
+            <p style='font-size: 11px; color: #888; margin-top: 5px;'>에너지 지킴이 유반장</p>
+        </div>
+        """, unsafe_allow_html=True)
+except Exception:
+    pass
+
 # -----------------------------------------------------------------------------
 # 4. 연산 
 # -----------------------------------------------------------------------------
@@ -139,7 +154,7 @@ ghg_reduction_display = ghg_reduction if ghg_reduction > 0 else 0
 pine_trees = int(ghg_reduction_display * 6.6)
 
 # -----------------------------------------------------------------------------
-# 5. K-PETRO CI Color가 적용된 커스텀 반원 게이지 차트
+# 5. 파란색으로 롤백된 커스텀 반원 게이지 차트
 # -----------------------------------------------------------------------------
 def make_gauge(val, target, title, unit, is_forecast=False):
     if target <= 0: target = val * 1.2 if val > 0 else 100
@@ -153,7 +168,6 @@ def make_gauge(val, target, title, unit, is_forecast=False):
     
     val_label = "예상실적" if is_forecast else "현재실적"
     
-    # 달성률 색상을 K-PETRO Light Green으로 변경
     if remaining >= 0:
         center_text = f"<span style='font-size:36px; font-weight:900; color:{KPETRO_GREEN};'>{achievement_rate:.1f}%</span><br><span style='font-size:18px; font-weight:bold; color:{KPETRO_GRAY};'>△ {rem_str} {unit}</span>"
     else:
@@ -166,7 +180,7 @@ def make_gauge(val, target, title, unit, is_forecast=False):
         title = {'text': f"<b>{title}</b>", 'font': {'size': 26, 'color': KPETRO_GRAY}},
         gauge = {
             'axis': {'range': [0, target], 'tickwidth': 1, 'tickcolor': "darkblue"},
-            'bar': {'color': KPETRO_GREEN}, # 그래프 게이지 바 색상 변경
+            'bar': {'color': "#1E90FF"}, # 다시 시원한 파란색으로 롤백
             'bgcolor': "#E0E0E0",
             'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.8, 'value': target}
         }
@@ -186,13 +200,22 @@ def make_gauge(val, target, title, unit, is_forecast=False):
 # -----------------------------------------------------------------------------
 # 6. 메인 화면 UI
 # -----------------------------------------------------------------------------
-# 타이틀 가운데 정렬 및 색상 적용
-st.markdown(f"""
-<div style='text-align: center; margin-top: 10px; margin-bottom: 40px;'>
-    <span style='font-size: 48px; font-weight: 900; color: {KPETRO_GREEN}; letter-spacing: -1px;'>K-PETRO</span>
-    <span style='font-size: 48px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -1px;'> BEMS 통합 모니터링</span>
-</div>
-""", unsafe_allow_html=True)
+# 💡 [메인 타이틀 수정] 텍스트 대신 '코퍼레이트_심볼_2.jpg'를 직접 띄워서 K 끝부분 녹색 완벽 구현
+try:
+    if os.path.exists("코퍼레이트_심볼_2.jpg"):
+        logo_b64 = get_image_base64("코퍼레이트_심볼_2.jpg")
+        title_html = f"""
+        <div style='display: flex; justify-content: center; align-items: center; margin-top: 10px; margin-bottom: 40px;'>
+            <img src="data:image/jpeg;base64,{logo_b64}" style="height: 55px; margin-right: 15px;">
+            <span style='font-size: 45px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -2px;'> BEMS 통합 모니터링</span>
+        </div>
+        """
+    else:
+        title_html = f"<h1 style='text-align:center; color:{KPETRO_GRAY};'>K-PETRO BEMS 통합 모니터링</h1>"
+except Exception:
+    title_html = f"<h1 style='text-align:center; color:{KPETRO_GRAY};'>K-PETRO BEMS 통합 모니터링</h1>"
+
+st.markdown(title_html, unsafe_allow_html=True)
 
 st.subheader(f"💡 K-PETRO 통합 실적 (누계 - {selected_month} 기준)")
 
