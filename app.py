@@ -47,16 +47,13 @@ except Exception as e:
     st.error(f"데이터 로드 중 에러가 발생했습니다: {e}")
     st.stop()
 
-# 지역(본부) 컬럼 자동 탐지
 possible_cols = ['본부명', '본부', '지사', '사업장', '구분', '지역']
 group_col = next((c for c in possible_cols if c in df_actual.columns), None)
 
-# 💡 [수정] 원하시는 본부 순서 강제 지정
 target_order = ['본사·수도권남부', '미래기술연구소', '수도권북부', '대전세종충남', '충북', '전남광주', '전북', '부산울산경남', '대구경북', '강원', '제주']
 
 if group_col and not df_actual[group_col].dropna().empty:
     raw_hqs = [x for x in df_actual[group_col].unique() if str(x).strip() != '']
-    # 지정된 순서대로 정렬 (목록에 없는 곳은 뒤로 배치)
     hq_list = sorted(raw_hqs, key=lambda x: target_order.index(x) if x in target_order else 999)
 else:
     hq_list = target_order
@@ -128,20 +125,22 @@ ghg_reduction_display = ghg_reduction if ghg_reduction > 0 else 0
 pine_trees = int(ghg_reduction_display * 6.6)
 
 # -----------------------------------------------------------------------------
-# 5. 💡 [전면 개편] 직관적 UI가 적용된 커스텀 반원 게이지 그래프 함수
+# 5. [수정] UI 디테일업이 적용된 커스텀 반원 게이지 차트
 # -----------------------------------------------------------------------------
-def make_gauge(val, target, title, unit):
+def make_gauge(val, target, title, unit, is_forecast=False):
     if target <= 0: target = val * 1.2 if val > 0 else 100
     remaining = target - val
     achievement_rate = (val / target * 100) if target > 0 else 0
     
-    # 단위에 따른 소수점 처리
     format_str = ",.1f" if unit == 'tCO2eq' else ",.0f"
     val_str = format(val, format_str)
     target_str = format(target, format_str)
     rem_str = format(abs(remaining), format_str)
     
-    # 중앙 텍스트 로직 (△ 모자란 양 / ▼ 초과 양)
+    # 예측 탭일 경우 텍스트를 '예상실적'으로 변경
+    val_label = "예상실적" if is_forecast else "현재실적"
+    
+    # 정중앙 텍스트 구성
     if remaining >= 0:
         center_text = f"<span style='font-size:36px; font-weight:900; color:#1E90FF;'>{achievement_rate:.1f}%</span><br><span style='font-size:18px; font-weight:bold; color:#555555;'>△ {rem_str} {unit}</span>"
     else:
@@ -151,7 +150,6 @@ def make_gauge(val, target, title, unit):
         mode = "gauge",
         value = val,
         domain = {'x': [0, 1], 'y': [0, 1]},
-        # 상단 본부명 타이틀 (기존보다 더 크게)
         title = {'text': f"<b>{title}</b>", 'font': {'size': 26, 'color': 'black'}},
         gauge = {
             'axis': {'range': [0, target], 'tickwidth': 1, 'tickcolor': "darkblue"},
@@ -161,14 +159,14 @@ def make_gauge(val, target, title, unit):
         }
     ))
     
-    # 텍스트 오버레이 (정중앙 달성률, 좌측하단 실적, 우측하단 목표)
+    # [수정] 텍스트가 그래프와 안 겹치게 내림 (y=-0.1) & 폰트 크기 상향 (size=16) & 여백 조정 (b=60)
     fig.update_layout(
-        height=320, 
-        margin=dict(l=30, r=30, t=70, b=30),
+        height=340, 
+        margin=dict(l=30, r=30, t=70, b=60),
         annotations=[
             dict(x=0.5, y=0.15, xref='paper', yref='paper', text=center_text, showarrow=False, align='center'),
-            dict(x=0.1, y=-0.05, xref='paper', yref='paper', text=f"현재실적: <b>{val_str}</b>", showarrow=False, font=dict(size=14, color='#1E90FF'), xanchor='center'),
-            dict(x=0.9, y=-0.05, xref='paper', yref='paper', text=f"목표치: <b>{target_str}</b>", showarrow=False, font=dict(size=14, color='red'), xanchor='center')
+            dict(x=0.15, y=-0.1, xref='paper', yref='paper', text=f"{val_label}: <b>{val_str}</b>", showarrow=False, font=dict(size=16, color='#1E90FF'), xanchor='center'),
+            dict(x=0.85, y=-0.1, xref='paper', yref='paper', text=f"목표치: <b>{target_str}</b>", showarrow=False, font=dict(size=16, color='red'), xanchor='center')
         ]
     )
     return fig
@@ -179,11 +177,11 @@ def make_gauge(val, target, title, unit):
 st.title("📊 K-PETRO BEMS 통합 모니터링")
 st.subheader(f"💡 K-PETRO 통합 실적 (누계 - {selected_month} 기준)")
 
-# 총괄 그래프 출력
+# [수정] '총괄 OOOO' 로 텍스트 간소화 적용
 g_col1, g_col2, g_col3 = st.columns(3)
-with g_col1: st.plotly_chart(make_gauge(total_ghg, target_ghg, "전사 총괄 온실가스 배출량", "tCO2eq"), use_container_width=True, key="top_ghg")
-with g_col2: st.plotly_chart(make_gauge(total_elec, target_elec, "전사 총괄 전력사용량", "kWh"), use_container_width=True, key="top_elec")
-with g_col3: st.plotly_chart(make_gauge(total_water, target_water, "전사 총괄 용수사용량", "ton"), use_container_width=True, key="top_water")
+with g_col1: st.plotly_chart(make_gauge(total_ghg, target_ghg, "총괄 온실가스 배출량", "tCO2eq"), use_container_width=True, key="top_ghg")
+with g_col2: st.plotly_chart(make_gauge(total_elec, target_elec, "총괄 전력사용량", "kWh"), use_container_width=True, key="top_elec")
+with g_col3: st.plotly_chart(make_gauge(total_water, target_water, "총괄 용수사용량", "ton"), use_container_width=True, key="top_water")
 
 st.markdown(f"""
 <div style='background-color: #E8F5E9; padding: 15px; border-radius: 8px; text-align: center; color: #2E7D32; font-size: 18px; font-weight: bold; margin-bottom: 20px;'>
@@ -199,12 +197,10 @@ if group_col:
     df_grouped = df_filtered.groupby(group_col).sum(numeric_only=True).reset_index()
     df_target_grouped = df_target.groupby(group_col).sum(numeric_only=True).reset_index() if group_col in df_target.columns else pd.DataFrame()
     raw_valid_hqs = [hq for hq in df_grouped[group_col].astype(str).tolist() if hq.strip() != '0' and hq.strip() != '']
-    # 💡 본부별 탭 내부도 지정된 순서대로 정렬
     valid_hqs = sorted(raw_valid_hqs, key=lambda x: target_order.index(x) if x in target_order else 999)
 else:
     df_grouped, df_target_grouped, valid_hqs = pd.DataFrame(), pd.DataFrame(), []
 
-# 본부별 실적 3열 그리드 출력 함수 (안전한 Row 단위 배치)
 def render_hq_grid(metric_type, tab_prefix):
     if not valid_hqs:
         st.info("표시할 본부별 데이터가 없습니다.")
@@ -244,6 +240,51 @@ def render_hq_grid(metric_type, tab_prefix):
                     elif metric_type == "WATER":
                         st.plotly_chart(make_gauge(r_water, t_water, f"{hq_name}", "ton"), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
 
+# [수정] 예측 탭 전용 3열 그리드 출력 함수 (비례 산출 로직 적용)
+def render_forecast_grid(metric_type, tab_prefix):
+    if not valid_hqs:
+        st.info("표시할 본부별 데이터가 없습니다.")
+        return
+    
+    # 💡 [핵심] 현재 집계된 월수를 기반으로 연말(12월) 예상치 산출 계수 생성
+    forecast_multiplier = (12 / sel_month_num) if sel_month_num > 0 else 1
+        
+    for i in range(0, len(valid_hqs), 3):
+        cols = st.columns(3)
+        for j in range(3):
+            idx = i + j
+            if idx < len(valid_hqs):
+                hq_name = valid_hqs[idx]
+                row = df_grouped[df_grouped[group_col].astype(str) == hq_name].iloc[0]
+                
+                # 누적 실적에 예측 계수를 곱하여 연말 예상치(Forecast) 산출
+                r_elec = float(row.get('전력사용량', 0)) * forecast_multiplier
+                r_gas = float(row.get('도시가스사용량', 0)) * forecast_multiplier
+                r_kero = float(row.get('실내등유사용량', 0)) * forecast_multiplier
+                r_water = float(row.get('용수사용량', 0)) * forecast_multiplier
+                r_ghg = (r_elec * 0.0004594106) + (r_gas * 0.002187587) + (r_kero * 0.0024652936)
+                
+                if not df_target_grouped.empty and hq_name in df_target_grouped[group_col].values:
+                    t_row = df_target_grouped[df_target_grouped[group_col] == hq_name].iloc[0]
+                    t_elec = float(t_row.get('전력목표_연간', 0))
+                    t_ghg = float(t_row.get('온실가스목표_연간', 0))
+                    t_water = float(t_row.get('용수목표_연간', 0))
+                    
+                    if t_elec == 0: t_elec = r_elec * 1.2
+                    if t_ghg == 0: t_ghg = r_ghg * 1.2
+                    if t_water == 0: t_water = r_water * 1.2
+                else:
+                    t_elec, t_ghg, t_water = r_elec * 1.2, r_ghg * 1.2, r_water * 1.2
+
+                with cols[j]:
+                    # 예측 탭에서는 is_forecast=True 파라미터를 넘겨 텍스트를 "예상실적"으로 자동 변경
+                    if metric_type == "GHG":
+                        st.plotly_chart(make_gauge(r_ghg, t_ghg, f"{hq_name}", "tCO2eq", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_ghg_{hq_name}")
+                    elif metric_type == "ELEC":
+                        st.plotly_chart(make_gauge(r_elec, t_elec, f"{hq_name}", "kWh", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_elec_{hq_name}")
+                    elif metric_type == "WATER":
+                        st.plotly_chart(make_gauge(r_water, t_water, f"{hq_name}", "ton", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
+
 with tab1:
     st.subheader(f"☁️ 본부별 온실가스 배출량 상세 실적 (누계 - {selected_month})")
     render_hq_grid("GHG", "tab1")
@@ -256,35 +297,14 @@ with tab3:
     st.subheader(f"💧 본부별 용수사용량 상세 실적 (누계 - {selected_month})")
     render_hq_grid("WATER", "tab3")
 
+# [수정] 예측 탭 하위 메뉴 구성 및 각 항목별 3열 반원 그래프 출력
 with tab4:
-    st.subheader("📈 본부별 종합 연간 달성 예측치")
-    if valid_hqs:
-        for hq_name in valid_hqs:
-            st.markdown(f"#### 📍 {hq_name}")
-            row = df_grouped[df_grouped[group_col].astype(str) == hq_name].iloc[0]
-            
-            r_elec = float(row.get('전력사용량', 0))
-            r_gas = float(row.get('도시가스사용량', 0))
-            r_kero = float(row.get('실내등유사용량', 0))
-            r_water = float(row.get('용수사용량', 0))
-            r_ghg = (r_elec * 0.0004594106) + (r_gas * 0.002187587) + (r_kero * 0.0024652936)
-            
-            if not df_target_grouped.empty and hq_name in df_target_grouped[group_col].values:
-                t_row = df_target_grouped[df_target_grouped[group_col] == hq_name].iloc[0]
-                t_elec = float(t_row.get('전력목표_연간', 0))
-                t_ghg = float(t_row.get('온실가스목표_연간', 0))
-                t_water = float(t_row.get('용수목표_연간', 0))
-                
-                if t_elec == 0: t_elec = r_elec * 1.5
-                if t_ghg == 0: t_ghg = r_ghg * 1.5
-                if t_water == 0: t_water = r_water * 1.5
-            else:
-                t_elec, t_ghg, t_water = r_elec * 1.5, r_ghg * 1.5, r_water * 1.5
-            
-            r_col1, r_col2, r_col3 = st.columns(3)
-            with r_col1: st.plotly_chart(make_gauge(r_ghg, t_ghg, f"{hq_name} 온실가스", "tCO2eq"), use_container_width=True, key=f"tab4_ghg_{hq_name}")
-            with r_col2: st.plotly_chart(make_gauge(r_elec, t_elec, f"{hq_name} 전력사용량", "kWh"), use_container_width=True, key=f"tab4_elec_{hq_name}")
-            with r_col3: st.plotly_chart(make_gauge(r_water, t_water, f"{hq_name} 용수사용량", "ton"), use_container_width=True, key=f"tab4_water_{hq_name}")
-            st.markdown("---")
-    else:
-        st.info("표시할 본부별 데이터가 없습니다.")
+    st.subheader("📈 항목별 종합 연간 달성 예측 시뮬레이션")
+    f_tab1, f_tab2, f_tab3 = st.tabs(["☁️ 온실가스 예측치", "⚡ 전력사용량 예측치", "💧 용수사용량 예측치"])
+    
+    with f_tab1:
+        render_forecast_grid("GHG", "forecast_ghg")
+    with f_tab2:
+        render_forecast_grid("ELEC", "forecast_elec")
+    with f_tab3:
+        render_forecast_grid("WATER", "forecast_water")
