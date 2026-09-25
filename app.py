@@ -5,11 +5,16 @@ from google.oauth2.service_account import Credentials
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime
+import os
 
 # -----------------------------------------------------------------------------
 # 1. 페이지 기본 설정 및 구글 API 클라이언트 연결
 # -----------------------------------------------------------------------------
-st.set_page_config(page_title="K-PETRO BEMS 통합 모니터링", page_icon="📊", layout="wide")
+st.set_page_config(page_title="K-PETRO BEMS 통합 모니터링", page_icon="🏢", layout="wide")
+
+# K-PETRO CI Official Colors (Pantone 376C & Pantone 425C)
+KPETRO_GREEN = "#8CC63F"
+KPETRO_GRAY = "#54585A"
 
 def get_client():
     scope = [
@@ -59,8 +64,13 @@ else:
     hq_list = target_order
 
 # -----------------------------------------------------------------------------
-# 3. 사이드바 (실적 직접 입력 제어판 & 시뮬레이터)
+# 3. 사이드바 (코퍼레이트 심볼 적용 및 제어판)
 # -----------------------------------------------------------------------------
+# 사이드바 상단 K-PETRO 로고 이미지 삽입
+if os.path.exists("코퍼레이트_심볼.jpg"):
+    st.sidebar.image("코퍼레이트_심볼.jpg", use_column_width=True)
+    st.sidebar.markdown("<br>", unsafe_allow_html=True)
+
 with st.sidebar.expander("⚙️ 관리자 제어판 (본부별 실적입력)", expanded=True):
     st.markdown("웹에서 실적을 입력하면 구글 DB에 실시간 연동됩니다.")
     with st.form("data_input_form", clear_on_submit=True):
@@ -95,7 +105,6 @@ st.sidebar.header("📈 실적달성 시뮬레이터")
 month_list_sim = [f"{i}월" for i in range(1, 13)]
 selected_month = st.sidebar.selectbox("현재 집계 완료(월)", month_list_sim, index=8)
 
-# [수정] 2026년과 2025년 데이터 모두 월(숫자) 기준 필터링 전처리
 sel_month_num = int(selected_month.replace('월', ''))
 
 if '월' in df_actual.columns:
@@ -108,7 +117,7 @@ if not df_2025.empty and '월' in df_2025.columns:
     df_2025['월_num'] = pd.to_numeric(df_2025['월'].astype(str).str.replace('월', '').str.strip(), errors='coerce').fillna(0).astype(int)
 
 # -----------------------------------------------------------------------------
-# 4. 연산 (정밀 계수 및 목표치 컬럼 완벽 매칭)
+# 4. 연산 
 # -----------------------------------------------------------------------------
 total_elec = float(df_filtered['전력사용량'].sum()) if '전력사용량' in df_filtered.columns else 0.0
 total_gas = float(df_filtered['도시가스사용량'].sum()) if '도시가스사용량' in df_filtered.columns else 0.0
@@ -130,7 +139,7 @@ ghg_reduction_display = ghg_reduction if ghg_reduction > 0 else 0
 pine_trees = int(ghg_reduction_display * 6.6)
 
 # -----------------------------------------------------------------------------
-# 5. UI 디테일업이 적용된 커스텀 반원 게이지 차트
+# 5. K-PETRO CI Color가 적용된 커스텀 반원 게이지 차트
 # -----------------------------------------------------------------------------
 def make_gauge(val, target, title, unit, is_forecast=False):
     if target <= 0: target = val * 1.2 if val > 0 else 100
@@ -144,8 +153,9 @@ def make_gauge(val, target, title, unit, is_forecast=False):
     
     val_label = "예상실적" if is_forecast else "현재실적"
     
+    # 달성률 색상을 K-PETRO Light Green으로 변경
     if remaining >= 0:
-        center_text = f"<span style='font-size:36px; font-weight:900; color:#1E90FF;'>{achievement_rate:.1f}%</span><br><span style='font-size:18px; font-weight:bold; color:#555555;'>△ {rem_str} {unit}</span>"
+        center_text = f"<span style='font-size:36px; font-weight:900; color:{KPETRO_GREEN};'>{achievement_rate:.1f}%</span><br><span style='font-size:18px; font-weight:bold; color:{KPETRO_GRAY};'>△ {rem_str} {unit}</span>"
     else:
         center_text = f"<span style='font-size:36px; font-weight:900; color:#FF0000;'>{achievement_rate:.1f}%</span><br><span style='font-size:18px; font-weight:bold; color:#FF0000;'>▼ 초과 {rem_str} {unit}</span>"
 
@@ -153,10 +163,10 @@ def make_gauge(val, target, title, unit, is_forecast=False):
         mode = "gauge",
         value = val,
         domain = {'x': [0, 1], 'y': [0, 1]},
-        title = {'text': f"<b>{title}</b>", 'font': {'size': 26, 'color': 'black'}},
+        title = {'text': f"<b>{title}</b>", 'font': {'size': 26, 'color': KPETRO_GRAY}},
         gauge = {
             'axis': {'range': [0, target], 'tickwidth': 1, 'tickcolor': "darkblue"},
-            'bar': {'color': "#1E90FF"},
+            'bar': {'color': KPETRO_GREEN}, # 그래프 게이지 바 색상 변경
             'bgcolor': "#E0E0E0",
             'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.8, 'value': target}
         }
@@ -167,7 +177,7 @@ def make_gauge(val, target, title, unit, is_forecast=False):
         margin=dict(l=30, r=30, t=70, b=60),
         annotations=[
             dict(x=0.5, y=0.15, xref='paper', yref='paper', text=center_text, showarrow=False, align='center'),
-            dict(x=0.15, y=-0.1, xref='paper', yref='paper', text=f"{val_label}: <b>{val_str}</b>", showarrow=False, font=dict(size=16, color='#1E90FF'), xanchor='center'),
+            dict(x=0.15, y=-0.1, xref='paper', yref='paper', text=f"{val_label}: <b>{val_str}</b>", showarrow=False, font=dict(size=16, color=KPETRO_GRAY), xanchor='center'),
             dict(x=0.85, y=-0.1, xref='paper', yref='paper', text=f"목표치: <b>{target_str}</b>", showarrow=False, font=dict(size=16, color='red'), xanchor='center')
         ]
     )
@@ -176,7 +186,14 @@ def make_gauge(val, target, title, unit, is_forecast=False):
 # -----------------------------------------------------------------------------
 # 6. 메인 화면 UI
 # -----------------------------------------------------------------------------
-st.title("📊 K-PETRO BEMS 통합 모니터링")
+# 타이틀 가운데 정렬 및 색상 적용
+st.markdown(f"""
+<div style='text-align: center; margin-top: 10px; margin-bottom: 40px;'>
+    <span style='font-size: 48px; font-weight: 900; color: {KPETRO_GREEN}; letter-spacing: -1px;'>K-PETRO</span>
+    <span style='font-size: 48px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -1px;'> BEMS 통합 모니터링</span>
+</div>
+""", unsafe_allow_html=True)
+
 st.subheader(f"💡 K-PETRO 통합 실적 (누계 - {selected_month} 기준)")
 
 g_col1, g_col2, g_col3 = st.columns(3)
@@ -241,7 +258,6 @@ def render_hq_grid(metric_type, tab_prefix):
                     elif metric_type == "WATER":
                         st.plotly_chart(make_gauge(r_water, t_water, f"{hq_name}", "ton"), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
 
-# [핵심 로직 추가] 과거 동월 대비 증감률을 적용한 연간 예측 시뮬레이터 함수
 def render_forecast_grid(metric_type, tab_prefix):
     if not valid_hqs:
         st.info("표시할 본부별 데이터가 없습니다.")
@@ -255,14 +271,12 @@ def render_forecast_grid(metric_type, tab_prefix):
                 hq_name = valid_hqs[idx]
                 row = df_grouped[df_grouped[group_col].astype(str) == hq_name].iloc[0]
                 
-                # 1. 올해 현재까지의 누적 실적
                 curr_elec = float(row.get('전력사용량', 0))
                 curr_gas = float(row.get('도시가스사용량', 0))
                 curr_kero = float(row.get('실내등유사용량', 0))
                 curr_water = float(row.get('용수사용량', 0))
                 curr_ghg = (curr_elec * 0.0004594106) + (curr_gas * 0.002187587) + (curr_kero * 0.0024652936)
                 
-                # 2. 작년(2025) 데이터 분석 (동기간 vs 남은기간)
                 prev_past_elec = prev_future_elec = 0
                 prev_past_ghg = prev_future_ghg = 0
                 prev_past_water = prev_future_water = 0
@@ -289,34 +303,30 @@ def render_forecast_grid(metric_type, tab_prefix):
                         prev_past_water = float(hq_2025_past['용수사용량'].sum()) if '용수사용량' in hq_2025_past else 0
                         prev_future_water = float(hq_2025_future['용수사용량'].sum()) if '용수사용량' in hq_2025_future else 0
 
-                # 3. 증감률(Trend)을 반영한 최종 예측 연산식
                 def get_forecast(curr, prev_past, prev_future):
                     if prev_past > 0:
-                        trend_rate = curr / prev_past # 작년 대비 올해 증감 비율
+                        trend_rate = curr / prev_past
                         return curr + (prev_future * trend_rate)
                     else:
-                        # 작년 데이터가 없으면 단순 월할 비례 산출
                         return curr * (12 / sel_month_num) if sel_month_num > 0 else curr
 
                 pred_elec = get_forecast(curr_elec, prev_past_elec, prev_future_elec)
                 pred_ghg = get_forecast(curr_ghg, prev_past_ghg, prev_future_ghg)
                 pred_water = get_forecast(curr_water, prev_past_water, prev_future_water)
                 
-                # 4. 목표치 매칭
                 if not df_target_grouped.empty and hq_name in df_target_grouped[group_col].values:
                     t_row = df_target_grouped[df_target_grouped[group_col] == hq_name].iloc[0]
                     t_elec = float(t_row.get('전력목표_연간', 0))
                     t_ghg = float(t_row.get('온실가스목표_연간', 0))
                     t_water = float(t_row.get('용수목표_연간', 0))
                     
-                    if t_elec == 0: t_elec = curr_elec * 1.5
-                    if t_ghg == 0: t_ghg = curr_ghg * 1.5
-                    if t_water == 0: t_water = curr_water * 1.5
+                    if t_elec == 0: t_elec = curr_elec * 1.2
+                    if t_ghg == 0: t_ghg = curr_ghg * 1.2
+                    if t_water == 0: t_water = curr_water * 1.2
                 else:
-                    t_elec, t_ghg, t_water = curr_elec * 1.5, curr_ghg * 1.5, curr_water * 1.5
+                    t_elec, t_ghg, t_water = curr_elec * 1.2, curr_ghg * 1.2, curr_water * 1.2
 
                 with cols[j]:
-                    # 예측 탭에서는 'is_forecast=True'를 전달하여 '예상실적'으로 표기
                     if metric_type == "GHG":
                         st.plotly_chart(make_gauge(pred_ghg, t_ghg, f"{hq_name}", "tCO2eq", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_ghg_{hq_name}")
                     elif metric_type == "ELEC":
@@ -346,3 +356,11 @@ with tab4:
         render_forecast_grid("ELEC", "forecast_elec")
     with f_tab3:
         render_forecast_grid("WATER", "forecast_water")
+
+# 하단 저작권 (Copyright) 표시
+st.markdown(f"""
+<hr style='border: 1px solid #E0E0E0; margin-top: 50px;'>
+<div style='text-align: center; color: #888888; font-size: 14px; padding-bottom: 20px;'>
+    &copy; 2026 한국석유관리원 운영지원팀. All rights reserved.
+</div>
+""", unsafe_allow_html=True)
