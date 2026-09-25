@@ -95,12 +95,17 @@ st.sidebar.header("📈 실적달성 시뮬레이터")
 month_list_sim = [f"{i}월" for i in range(1, 13)]
 selected_month = st.sidebar.selectbox("현재 집계 완료(월)", month_list_sim, index=8)
 
+# [수정] 2026년과 2025년 데이터 모두 월(숫자) 기준 필터링 전처리
 sel_month_num = int(selected_month.replace('월', ''))
+
 if '월' in df_actual.columns:
     df_actual['월_num'] = pd.to_numeric(df_actual['월'].astype(str).str.replace('월', '').str.strip(), errors='coerce').fillna(0).astype(int)
     df_filtered = df_actual[(df_actual['월_num'] > 0) & (df_actual['월_num'] <= sel_month_num)]
 else:
     df_filtered = df_actual
+
+if not df_2025.empty and '월' in df_2025.columns:
+    df_2025['월_num'] = pd.to_numeric(df_2025['월'].astype(str).str.replace('월', '').str.strip(), errors='coerce').fillna(0).astype(int)
 
 # -----------------------------------------------------------------------------
 # 4. 연산 (정밀 계수 및 목표치 컬럼 완벽 매칭)
@@ -125,7 +130,7 @@ ghg_reduction_display = ghg_reduction if ghg_reduction > 0 else 0
 pine_trees = int(ghg_reduction_display * 6.6)
 
 # -----------------------------------------------------------------------------
-# 5. [수정] UI 디테일업이 적용된 커스텀 반원 게이지 차트
+# 5. UI 디테일업이 적용된 커스텀 반원 게이지 차트
 # -----------------------------------------------------------------------------
 def make_gauge(val, target, title, unit, is_forecast=False):
     if target <= 0: target = val * 1.2 if val > 0 else 100
@@ -137,10 +142,8 @@ def make_gauge(val, target, title, unit, is_forecast=False):
     target_str = format(target, format_str)
     rem_str = format(abs(remaining), format_str)
     
-    # 예측 탭일 경우 텍스트를 '예상실적'으로 변경
     val_label = "예상실적" if is_forecast else "현재실적"
     
-    # 정중앙 텍스트 구성
     if remaining >= 0:
         center_text = f"<span style='font-size:36px; font-weight:900; color:#1E90FF;'>{achievement_rate:.1f}%</span><br><span style='font-size:18px; font-weight:bold; color:#555555;'>△ {rem_str} {unit}</span>"
     else:
@@ -159,7 +162,6 @@ def make_gauge(val, target, title, unit, is_forecast=False):
         }
     ))
     
-    # [수정] 텍스트가 그래프와 안 겹치게 내림 (y=-0.1) & 폰트 크기 상향 (size=16) & 여백 조정 (b=60)
     fig.update_layout(
         height=340, 
         margin=dict(l=30, r=30, t=70, b=60),
@@ -177,7 +179,6 @@ def make_gauge(val, target, title, unit, is_forecast=False):
 st.title("📊 K-PETRO BEMS 통합 모니터링")
 st.subheader(f"💡 K-PETRO 통합 실적 (누계 - {selected_month} 기준)")
 
-# [수정] '총괄 OOOO' 로 텍스트 간소화 적용
 g_col1, g_col2, g_col3 = st.columns(3)
 with g_col1: st.plotly_chart(make_gauge(total_ghg, target_ghg, "총괄 온실가스 배출량", "tCO2eq"), use_container_width=True, key="top_ghg")
 with g_col2: st.plotly_chart(make_gauge(total_elec, target_elec, "총괄 전력사용량", "kWh"), use_container_width=True, key="top_elec")
@@ -240,14 +241,11 @@ def render_hq_grid(metric_type, tab_prefix):
                     elif metric_type == "WATER":
                         st.plotly_chart(make_gauge(r_water, t_water, f"{hq_name}", "ton"), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
 
-# [수정] 예측 탭 전용 3열 그리드 출력 함수 (비례 산출 로직 적용)
+# [핵심 로직 추가] 과거 동월 대비 증감률을 적용한 연간 예측 시뮬레이터 함수
 def render_forecast_grid(metric_type, tab_prefix):
     if not valid_hqs:
         st.info("표시할 본부별 데이터가 없습니다.")
         return
-    
-    # 💡 [핵심] 현재 집계된 월수를 기반으로 연말(12월) 예상치 산출 계수 생성
-    forecast_multiplier = (12 / sel_month_num) if sel_month_num > 0 else 1
         
     for i in range(0, len(valid_hqs), 3):
         cols = st.columns(3)
@@ -257,33 +255,74 @@ def render_forecast_grid(metric_type, tab_prefix):
                 hq_name = valid_hqs[idx]
                 row = df_grouped[df_grouped[group_col].astype(str) == hq_name].iloc[0]
                 
-                # 누적 실적에 예측 계수를 곱하여 연말 예상치(Forecast) 산출
-                r_elec = float(row.get('전력사용량', 0)) * forecast_multiplier
-                r_gas = float(row.get('도시가스사용량', 0)) * forecast_multiplier
-                r_kero = float(row.get('실내등유사용량', 0)) * forecast_multiplier
-                r_water = float(row.get('용수사용량', 0)) * forecast_multiplier
-                r_ghg = (r_elec * 0.0004594106) + (r_gas * 0.002187587) + (r_kero * 0.0024652936)
+                # 1. 올해 현재까지의 누적 실적
+                curr_elec = float(row.get('전력사용량', 0))
+                curr_gas = float(row.get('도시가스사용량', 0))
+                curr_kero = float(row.get('실내등유사용량', 0))
+                curr_water = float(row.get('용수사용량', 0))
+                curr_ghg = (curr_elec * 0.0004594106) + (curr_gas * 0.002187587) + (curr_kero * 0.0024652936)
                 
+                # 2. 작년(2025) 데이터 분석 (동기간 vs 남은기간)
+                prev_past_elec = prev_future_elec = 0
+                prev_past_ghg = prev_future_ghg = 0
+                prev_past_water = prev_future_water = 0
+                
+                if not df_2025.empty and group_col in df_2025.columns:
+                    hq_2025 = df_2025[df_2025[group_col].astype(str) == hq_name]
+                    if not hq_2025.empty and '월_num' in hq_2025.columns:
+                        hq_2025_past = hq_2025[hq_2025['월_num'] <= sel_month_num]
+                        hq_2025_future = hq_2025[hq_2025['월_num'] > sel_month_num]
+                        
+                        prev_past_elec = float(hq_2025_past['전력사용량'].sum()) if '전력사용량' in hq_2025_past else 0
+                        prev_future_elec = float(hq_2025_future['전력사용량'].sum()) if '전력사용량' in hq_2025_future else 0
+                        
+                        p_e = prev_past_elec
+                        p_g = float(hq_2025_past['도시가스사용량'].sum()) if '도시가스사용량' in hq_2025_past else 0
+                        p_k = float(hq_2025_past['실내등유사용량'].sum()) if '실내등유사용량' in hq_2025_past else 0
+                        prev_past_ghg = (p_e * 0.0004594106) + (p_g * 0.002187587) + (p_k * 0.0024652936)
+                        
+                        f_e = prev_future_elec
+                        f_g = float(hq_2025_future['도시가스사용량'].sum()) if '도시가스사용량' in hq_2025_future else 0
+                        f_k = float(hq_2025_future['실내등유사용량'].sum()) if '실내등유사용량' in hq_2025_future else 0
+                        prev_future_ghg = (f_e * 0.0004594106) + (f_g * 0.002187587) + (f_k * 0.0024652936)
+                        
+                        prev_past_water = float(hq_2025_past['용수사용량'].sum()) if '용수사용량' in hq_2025_past else 0
+                        prev_future_water = float(hq_2025_future['용수사용량'].sum()) if '용수사용량' in hq_2025_future else 0
+
+                # 3. 증감률(Trend)을 반영한 최종 예측 연산식
+                def get_forecast(curr, prev_past, prev_future):
+                    if prev_past > 0:
+                        trend_rate = curr / prev_past # 작년 대비 올해 증감 비율
+                        return curr + (prev_future * trend_rate)
+                    else:
+                        # 작년 데이터가 없으면 단순 월할 비례 산출
+                        return curr * (12 / sel_month_num) if sel_month_num > 0 else curr
+
+                pred_elec = get_forecast(curr_elec, prev_past_elec, prev_future_elec)
+                pred_ghg = get_forecast(curr_ghg, prev_past_ghg, prev_future_ghg)
+                pred_water = get_forecast(curr_water, prev_past_water, prev_future_water)
+                
+                # 4. 목표치 매칭
                 if not df_target_grouped.empty and hq_name in df_target_grouped[group_col].values:
                     t_row = df_target_grouped[df_target_grouped[group_col] == hq_name].iloc[0]
                     t_elec = float(t_row.get('전력목표_연간', 0))
                     t_ghg = float(t_row.get('온실가스목표_연간', 0))
                     t_water = float(t_row.get('용수목표_연간', 0))
                     
-                    if t_elec == 0: t_elec = r_elec * 1.2
-                    if t_ghg == 0: t_ghg = r_ghg * 1.2
-                    if t_water == 0: t_water = r_water * 1.2
+                    if t_elec == 0: t_elec = curr_elec * 1.5
+                    if t_ghg == 0: t_ghg = curr_ghg * 1.5
+                    if t_water == 0: t_water = curr_water * 1.5
                 else:
-                    t_elec, t_ghg, t_water = r_elec * 1.2, r_ghg * 1.2, r_water * 1.2
+                    t_elec, t_ghg, t_water = curr_elec * 1.5, curr_ghg * 1.5, curr_water * 1.5
 
                 with cols[j]:
-                    # 예측 탭에서는 is_forecast=True 파라미터를 넘겨 텍스트를 "예상실적"으로 자동 변경
+                    # 예측 탭에서는 'is_forecast=True'를 전달하여 '예상실적'으로 표기
                     if metric_type == "GHG":
-                        st.plotly_chart(make_gauge(r_ghg, t_ghg, f"{hq_name}", "tCO2eq", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_ghg_{hq_name}")
+                        st.plotly_chart(make_gauge(pred_ghg, t_ghg, f"{hq_name}", "tCO2eq", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_ghg_{hq_name}")
                     elif metric_type == "ELEC":
-                        st.plotly_chart(make_gauge(r_elec, t_elec, f"{hq_name}", "kWh", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_elec_{hq_name}")
+                        st.plotly_chart(make_gauge(pred_elec, t_elec, f"{hq_name}", "kWh", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_elec_{hq_name}")
                     elif metric_type == "WATER":
-                        st.plotly_chart(make_gauge(r_water, t_water, f"{hq_name}", "ton", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
+                        st.plotly_chart(make_gauge(pred_water, t_water, f"{hq_name}", "ton", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
 
 with tab1:
     st.subheader(f"☁️ 본부별 온실가스 배출량 상세 실적 (누계 - {selected_month})")
@@ -297,7 +336,6 @@ with tab3:
     st.subheader(f"💧 본부별 용수사용량 상세 실적 (누계 - {selected_month})")
     render_hq_grid("WATER", "tab3")
 
-# [수정] 예측 탭 하위 메뉴 구성 및 각 항목별 3열 반원 그래프 출력
 with tab4:
     st.subheader("📈 항목별 종합 연간 달성 예측 시뮬레이션")
     f_tab1, f_tab2, f_tab3 = st.tabs(["☁️ 온실가스 예측치", "⚡ 전력사용량 예측치", "💧 용수사용량 예측치"])
