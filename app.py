@@ -200,10 +200,10 @@ def make_gauge(val, target, title, unit, is_forecast=False):
 # -----------------------------------------------------------------------------
 # 6. 메인 화면 UI
 # -----------------------------------------------------------------------------
-# 💡 [메인 타이틀 수정] 텍스트 대신 '코퍼레이트_심볼_2.jpg'를 직접 띄워서 K 끝부분 녹색 완벽 구현
+# 💡 [메인 타이틀 수정] 텍스트 대신 '코퍼레이트_심볼.jpg'를 직접 띄워서 K 끝부분 녹색 완벽 구현
 try:
     if os.path.exists("코퍼레이트_심볼_2.jpg"):
-        logo_b64 = get_image_base64("코퍼레이트_심볼_2.jpg")
+        logo_b64 = get_image_base64("코퍼레이트_심볼.jpg")
         title_html = f"""
         <div style='display: flex; justify-content: center; align-items: center; margin-top: 10px; margin-bottom: 40px;'>
             <img src="data:image/jpeg;base64,{logo_b64}" style="height: 55px; margin-right: 15px;">
