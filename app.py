@@ -264,7 +264,7 @@ else:
     yubanjang_html = ""
 
 # 💡 [수정] K-REMS 텍스트 색상을 다크그레이로 롤백
-title_html = f"<div style='display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 20px;'><div style='flex: 1; display: flex; justify-content: flex-start; align-items: center; padding-left: 10px;'>{left_html}</div><div style='flex: 2; display: flex; justify-content: center; align-items: center;'><span style='font-size: 48px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -1.5px;'>K-REMS 통합 모니터링</span></div><div style='flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 10px;'>{yubanjang_html}</div></div>"
+title_html = f"<div style='display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 20px;'><div style='flex: 1; display: flex; justify-content: flex-start; align-items: center; padding-left: 10px;'>{left_html}</div><div style='flex: 2; display: flex; justify-content: center; align-items: center;'><span style='font-size: 60px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -1.5px;'>K-REMS 통합 모니터링</span></div><div style='flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 10px;'>{yubanjang_html}</div></div>"
 st.markdown(title_html, unsafe_allow_html=True)
 
 # =============================================================================
