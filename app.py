@@ -117,16 +117,18 @@ with st.sidebar.expander("⚙️ 관리자 제어판 (본부별 실적입력)", 
             except Exception as e:
                 st.error(f"구글 시트 연동 중 에러 발생: {e}")
 
+# 💡 [수정] 사이드바 제목 1: '실적달성 시뮬레이터' (19px, 한 줄 꽉 차게)
 st.sidebar.markdown("---")
-st.sidebar.header("📈 실적달성 시뮬레이터")
+st.sidebar.markdown("<div style='font-size: 19px; font-weight: bold; letter-spacing: -1px; margin-bottom: 10px;'>📈 실적달성 시뮬레이터</div>", unsafe_allow_html=True)
+
 month_list_sim = [f"{i}월" for i in range(1, 13)]
 selected_month = st.sidebar.selectbox("현재 집계 완료(월)", month_list_sim, index=8)
 
 sel_month_num = int(selected_month.replace('월', ''))
 
-# 💡 [수정] 사이드바 랭킹 제목 22px 적용 및 버튼 에러(DuplicateElementId) 방지 고유 key 적용
+# 💡 [수정] 사이드바 제목 2: '온실가스 절감률 순위 표시' (19px, 크기 동일화, 한 줄 꽉 차게)
 st.sidebar.markdown("---")
-st.sidebar.markdown("<div style='font-size: 22px; font-weight: bold; margin-bottom: 15px;'>🏆 온실가스 절감률 순위 표시</div>", unsafe_allow_html=True)
+st.sidebar.markdown("<div style='font-size: 19px; font-weight: bold; letter-spacing: -1px; margin-bottom: 10px;'>🏆 온실가스 절감률 순위 표시</div>", unsafe_allow_html=True)
 
 btn_label = "🔙 메인 대시보드로 돌아가기" if st.session_state.show_ranking else "🏆 온실가스 절감률 순위 확인"
 if st.sidebar.button(btn_label, use_container_width=True, key="rank_toggle_button"):
