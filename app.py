@@ -34,6 +34,14 @@ def get_image_base64(filenames):
                 return base64.b64encode(f.read()).decode()
     return None
 
+# 본부명 뒤에 자동으로 '본부'를 붙여주는 스마트 포맷팅 함수
+def format_hq_name(name):
+    if name in ['미래기술연구소', '본사·수도권남부']:
+        return name
+    if not name.endswith('본부'):
+        return name + '본부'
+    return name
+
 # -----------------------------------------------------------------------------
 # 세션 상태 초기화 (탭 전환용)
 # -----------------------------------------------------------------------------
@@ -116,10 +124,10 @@ selected_month = st.sidebar.selectbox("현재 집계 완료(월)", month_list_si
 
 sel_month_num = int(selected_month.replace('월', ''))
 
-# 사이드바 랭킹 버튼 (토글 기능)
+# 💡 [수정] 사이드바 랭킹 버튼 텍스트 변경
 st.sidebar.markdown("---")
-st.sidebar.header("🏆 절감률 순위 표시기")
-btn_label = "🔙 메인 대시보드로 돌아가기" if st.session_state.show_ranking else "🏆 절감률 순위 표시"
+st.sidebar.header("🏆 온실가스 절감률 순위 표시")
+btn_label = "🔙 메인 대시보드로 돌아가기" if st.session_state.show_ranking else "🏆 온실가스 절감률 순위 표시"
 if st.sidebar.button(btn_label, use_container_width=True):
     st.session_state.show_ranking = not st.session_state.show_ranking
     st.rerun()
@@ -180,8 +188,11 @@ if valid_hqs:
             t_ghg = r_ghg * 1.5
             
         achievement_rate = (r_ghg / t_ghg * 100) if t_ghg > 0 else 0
+        
+        # 💡 [수정] 랭킹 데이터 생성 시부터 'OO본부'로 포맷팅하여 저장
+        disp_name = format_hq_name(hq_name)
         rank_data.append({
-            "본부명": hq_name,
+            "본부명": disp_name, 
             "현재배출량(tCO2eq)": round(r_ghg, 1),
             "목표량(tCO2eq)": round(t_ghg, 1),
             "사용률(%)": round(achievement_rate, 1)
@@ -238,14 +249,21 @@ def make_gauge(val, target, title, unit, is_forecast=False):
 # -----------------------------------------------------------------------------
 # 6. 메인 화면 UI (타이틀)
 # -----------------------------------------------------------------------------
-# 💡 [수정] 양옆 이미지 크기를 96px로 2배 확대 및 텍스트 색상 통일 적용
-left_logo_b64 = get_image_base64(["한글상하조합_2.jpg", "한글상하조합.jpg", "한글상하조합.png"])
+left_logo_b64 = get_image_base64(["한글상하조합_2.jpg", "한글상하조합_2.png", "한글상하조합.jpg", "한글상하조합.png"])
 yubanjang_b64 = get_image_base64(["유반장.jpg", "유반장.png"])
 
-left_html = f'<img src="data:image/jpeg;base64,{left_logo_b64}" style="height: 96px; object-fit: contain;">' if left_logo_b64 else ""
-yubanjang_html = f'<img src="data:image/jpeg;base64,{yubanjang_b64}" style="height: 96px; object-fit: contain;">' if yubanjang_b64 else ""
+# 💡 깃허브에 파일이 없으면 안내 문구를 띄워 원인 파악을 돕습니다.
+if left_logo_b64:
+    left_html = f'<img src="data:image/jpeg;base64,{left_logo_b64}" style="height: 96px; object-fit: contain;">'
+else:
+    left_html = f"<span style='color: #aaa; font-size: 14px;'>[로고 이미지 깃허브 업로드 필요]</span>"
 
-# 줄바꿈 없이 한 줄로 작성하여 Streamlit 렌더링 에러 방지
+if yubanjang_b64:
+    yubanjang_html = f'<img src="data:image/jpeg;base64,{yubanjang_b64}" style="height: 96px; object-fit: contain;">'
+else:
+    yubanjang_html = ""
+
+# 💡 [수정] K-REMS 텍스트 색상을 다크그레이로 롤백
 title_html = f"<div style='display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 20px;'><div style='flex: 1; display: flex; justify-content: flex-start; align-items: center; padding-left: 10px;'>{left_html}</div><div style='flex: 2; display: flex; justify-content: center; align-items: center;'><span style='font-size: 48px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -1.5px;'>K-REMS 통합 모니터링</span></div><div style='flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 10px;'>{yubanjang_html}</div></div>"
 st.markdown(title_html, unsafe_allow_html=True)
 
@@ -268,7 +286,7 @@ if st.session_state.show_ranking:
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # 순위 박스 바로 아래 현황 그래프 세팅
+                # 💡 [수정] 차트 제목에 'OO본부 온실가스'로 자동 연동
                 st.plotly_chart(make_gauge(data['현재배출량(tCO2eq)'], data['목표량(tCO2eq)'], f"{data['본부명']} 온실가스", "tCO2eq"), use_container_width=True, key=f"rank_gauge_{idx}")
                 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -308,6 +326,7 @@ else:
                 idx = i + j
                 if idx < len(valid_hqs):
                     hq_name = valid_hqs[idx]
+                    disp_name = format_hq_name(hq_name) # 'OO본부' 포맷 적용
                     row = df_grouped[df_grouped[group_col].astype(str) == hq_name].iloc[0]
                     
                     r_elec = float(row.get('전력사용량', 0))
@@ -330,11 +349,11 @@ else:
 
                     with cols[j]:
                         if metric_type == "GHG":
-                            st.plotly_chart(make_gauge(r_ghg, t_ghg, f"{hq_name}", "tCO2eq"), use_container_width=True, key=f"{tab_prefix}_ghg_{hq_name}")
+                            st.plotly_chart(make_gauge(r_ghg, t_ghg, f"{disp_name}", "tCO2eq"), use_container_width=True, key=f"{tab_prefix}_ghg_{hq_name}")
                         elif metric_type == "ELEC":
-                            st.plotly_chart(make_gauge(r_elec, t_elec, f"{hq_name}", "kWh"), use_container_width=True, key=f"{tab_prefix}_elec_{hq_name}")
+                            st.plotly_chart(make_gauge(r_elec, t_elec, f"{disp_name}", "kWh"), use_container_width=True, key=f"{tab_prefix}_elec_{hq_name}")
                         elif metric_type == "WATER":
-                            st.plotly_chart(make_gauge(r_water, t_water, f"{hq_name}", "ton"), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
+                            st.plotly_chart(make_gauge(r_water, t_water, f"{disp_name}", "ton"), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
 
     def render_forecast_grid(metric_type, tab_prefix):
         if not valid_hqs:
@@ -347,6 +366,7 @@ else:
                 idx = i + j
                 if idx < len(valid_hqs):
                     hq_name = valid_hqs[idx]
+                    disp_name = format_hq_name(hq_name) # 'OO본부' 포맷 적용
                     row = df_grouped[df_grouped[group_col].astype(str) == hq_name].iloc[0]
                     
                     curr_elec = float(row.get('전력사용량', 0))
@@ -406,14 +426,14 @@ else:
 
                     with cols[j]:
                         if metric_type == "GHG":
-                            st.plotly_chart(make_gauge(pred_ghg, t_ghg, f"{hq_name}", "tCO2eq", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_ghg_{hq_name}")
+                            st.plotly_chart(make_gauge(pred_ghg, t_ghg, f"{disp_name}", "tCO2eq", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_ghg_{hq_name}")
                         elif metric_type == "ELEC":
-                            st.plotly_chart(make_gauge(pred_elec, t_elec, f"{hq_name}", "kWh", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_elec_{hq_name}")
+                            st.plotly_chart(make_gauge(pred_elec, t_elec, f"{disp_name}", "kWh", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_elec_{hq_name}")
                         elif metric_type == "WATER":
-                            st.plotly_chart(make_gauge(pred_water, t_water, f"{hq_name}", "ton", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
+                            st.plotly_chart(make_gauge(pred_water, t_water, f"{disp_name}", "ton", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
 
     with tab1:
-        st.subheader(f"☁️️ 본부별 온실가스 배출량 상세 실적 (누계 - {selected_month})")
+        st.subheader(f"☁ 본부별 온실가스 배출량 상세 실적 (누계 - {selected_month})")
         render_hq_grid("GHG", "tab1")
 
     with tab2:
