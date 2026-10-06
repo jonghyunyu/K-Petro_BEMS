@@ -124,15 +124,12 @@ selected_month = st.sidebar.selectbox("현재 집계 완료(월)", month_list_si
 
 sel_month_num = int(selected_month.replace('월', ''))
 
-# 💡 [수정] 사이드바 랭킹 버튼 텍스트 변경
+# 💡 [수정] 사이드바 랭킹 제목 22px 적용 및 버튼 에러(DuplicateElementId) 방지 고유 key 적용
 st.sidebar.markdown("---")
 st.sidebar.markdown("<div style='font-size: 22px; font-weight: bold; margin-bottom: 15px;'>🏆 온실가스 절감률 순위 표시</div>", unsafe_allow_html=True)
-btn_label = "🔙 메인 대시보드로 돌아가기" if st.session_state.show_ranking else "🏆 온실가스 절감률 순위 표시"
-if st.sidebar.button(btn_label, use_container_width=True):
-    st.session_state.show_ranking = not st.session_state.show_ranking
-    st.rerun()
-btn_label = "🔙 메인 대시보드로 돌아가기" if st.session_state.show_ranking else "🏆 온실가스 절감률 순위 표시"
-if st.sidebar.button(btn_label, use_container_width=True):
+
+btn_label = "🔙 메인 대시보드로 돌아가기" if st.session_state.show_ranking else "🏆 온실가스 절감률 순위 확인"
+if st.sidebar.button(btn_label, use_container_width=True, key="rank_toggle_button"):
     st.session_state.show_ranking = not st.session_state.show_ranking
     st.rerun()
 
@@ -193,7 +190,6 @@ if valid_hqs:
             
         achievement_rate = (r_ghg / t_ghg * 100) if t_ghg > 0 else 0
         
-        # 💡 [수정] 랭킹 데이터 생성 시부터 'OO본부'로 포맷팅하여 저장
         disp_name = format_hq_name(hq_name)
         rank_data.append({
             "본부명": disp_name, 
@@ -256,9 +252,8 @@ def make_gauge(val, target, title, unit, is_forecast=False):
 left_logo_b64 = get_image_base64(["한글상하조합_2.jpg", "한글상하조합_2.png", "한글상하조합.jpg", "한글상하조합.png"])
 yubanjang_b64 = get_image_base64(["유반장.jpg", "유반장.png"])
 
-# 💡 깃허브에 파일이 없으면 안내 문구를 띄워 원인 파악을 돕습니다.
 if left_logo_b64:
-    left_html = f'<img src="data:image/jpeg;base64,{left_logo_b64}" style="height: 70px; object-fit: contain;">'
+    left_html = f'<img src="data:image/jpeg;base64,{left_logo_b64}" style="height: 96px; object-fit: contain;">'
 else:
     left_html = f"<span style='color: #aaa; font-size: 14px;'>[로고 이미지 깃허브 업로드 필요]</span>"
 
@@ -267,8 +262,7 @@ if yubanjang_b64:
 else:
     yubanjang_html = ""
 
-# 💡 [수정] K-REMS 텍스트 색상을 다크그레이로 롤백
-title_html = f"<div style='display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 20px;'><div style='flex: 1; display: flex; justify-content: flex-start; align-items: center; padding-left: 10px;'>{left_html}</div><div style='flex: 2; display: flex; justify-content: center; align-items: center;'><span style='font-size: 60px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -1.5px;'>K-REMS 통합 모니터링</span></div><div style='flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 10px;'>{yubanjang_html}</div></div>"
+title_html = f"<div style='display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 20px;'><div style='flex: 1; display: flex; justify-content: flex-start; align-items: center; padding-left: 10px;'>{left_html}</div><div style='flex: 2; display: flex; justify-content: center; align-items: center;'><span style='font-size: 48px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -1.5px;'>K-REMS 통합 모니터링</span></div><div style='flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 10px;'>{yubanjang_html}</div></div>"
 st.markdown(title_html, unsafe_allow_html=True)
 
 # =============================================================================
@@ -290,7 +284,6 @@ if st.session_state.show_ranking:
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # 💡 [수정] 차트 제목에 'OO본부 온실가스'로 자동 연동
                 st.plotly_chart(make_gauge(data['현재배출량(tCO2eq)'], data['목표량(tCO2eq)'], f"{data['본부명']} 온실가스", "tCO2eq"), use_container_width=True, key=f"rank_gauge_{idx}")
                 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -330,7 +323,7 @@ else:
                 idx = i + j
                 if idx < len(valid_hqs):
                     hq_name = valid_hqs[idx]
-                    disp_name = format_hq_name(hq_name) # 'OO본부' 포맷 적용
+                    disp_name = format_hq_name(hq_name) 
                     row = df_grouped[df_grouped[group_col].astype(str) == hq_name].iloc[0]
                     
                     r_elec = float(row.get('전력사용량', 0))
@@ -370,7 +363,7 @@ else:
                 idx = i + j
                 if idx < len(valid_hqs):
                     hq_name = valid_hqs[idx]
-                    disp_name = format_hq_name(hq_name) # 'OO본부' 포맷 적용
+                    disp_name = format_hq_name(hq_name)
                     row = df_grouped[df_grouped[group_col].astype(str) == hq_name].iloc[0]
                     
                     curr_elec = float(row.get('전력사용량', 0))
