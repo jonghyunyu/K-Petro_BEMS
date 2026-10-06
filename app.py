@@ -126,7 +126,11 @@ sel_month_num = int(selected_month.replace('월', ''))
 
 # 💡 [수정] 사이드바 랭킹 버튼 텍스트 변경
 st.sidebar.markdown("---")
-st.sidebar.header("🏆 온실가스 절감률 순위 표시")
+st.sidebar.markdown("<div style='font-size: 22px; font-weight: bold; margin-bottom: 15px;'>🏆 온실가스 절감률 순위 표시</div>", unsafe_allow_html=True)
+btn_label = "🔙 메인 대시보드로 돌아가기" if st.session_state.show_ranking else "🏆 온실가스 절감률 순위 표시"
+if st.sidebar.button(btn_label, use_container_width=True):
+    st.session_state.show_ranking = not st.session_state.show_ranking
+    st.rerun()
 btn_label = "🔙 메인 대시보드로 돌아가기" if st.session_state.show_ranking else "🏆 온실가스 절감률 순위 표시"
 if st.sidebar.button(btn_label, use_container_width=True):
     st.session_state.show_ranking = not st.session_state.show_ranking
