@@ -11,7 +11,7 @@ import base64
 # -----------------------------------------------------------------------------
 # 1. 페이지 기본 설정 및 구글 API 클라이언트 연결
 # -----------------------------------------------------------------------------
-st.set_page_config(page_title="K-PETRO BEMS 통합 모니터링", page_icon="🏢", layout="wide")
+st.set_page_config(page_title="K-REMS 통합 모니터링", page_icon="🏢", layout="wide")
 
 # K-PETRO CI Official Colors
 KPETRO_GREEN = "#8CC63F"
@@ -141,8 +141,43 @@ ghg_reduction = target_ghg - total_ghg
 ghg_reduction_display = ghg_reduction if ghg_reduction > 0 else 0
 pine_trees = int(ghg_reduction_display * 6.6)
 
+if group_col:
+    df_grouped = df_filtered.groupby(group_col).sum(numeric_only=True).reset_index()
+    df_target_grouped = df_target.groupby(group_col).sum(numeric_only=True).reset_index() if group_col in df_target.columns else pd.DataFrame()
+    raw_valid_hqs = [hq for hq in df_grouped[group_col].astype(str).tolist() if hq.strip() != '0' and hq.strip() != '']
+    valid_hqs = sorted(raw_valid_hqs, key=lambda x: target_order.index(x) if x in target_order else 999)
+else:
+    df_grouped, df_target_grouped, valid_hqs = pd.DataFrame(), pd.DataFrame(), []
+
+# 본부별 절감률 랭킹 데이터 산출
+rank_data = []
+if valid_hqs:
+    for hq_name in valid_hqs:
+        row = df_grouped[df_grouped[group_col].astype(str) == hq_name].iloc[0]
+        r_elec = float(row.get('전력사용량', 0))
+        r_gas = float(row.get('도시가스사용량', 0))
+        r_kero = float(row.get('실내등유사용량', 0))
+        r_ghg = (r_elec * 0.0004594106) + (r_gas * 0.002187587) + (r_kero * 0.0024652936)
+        
+        if not df_target_grouped.empty and hq_name in df_target_grouped[group_col].values:
+            t_row = df_target_grouped[df_target_grouped[group_col] == hq_name].iloc[0]
+            t_ghg = float(t_row.get('온실가스목표_연간', 0))
+            if t_ghg == 0: t_ghg = r_ghg * 1.5
+        else:
+            t_ghg = r_ghg * 1.5
+            
+        achievement_rate = (r_ghg / t_ghg * 100) if t_ghg > 0 else 0
+        rank_data.append({
+            "본부명": hq_name,
+            "현재배출량(tCO2eq)": round(r_ghg, 1),
+            "목표량(tCO2eq)": round(t_ghg, 1),
+            "사용률(%)": round(achievement_rate, 1)
+        })
+    # 사용률이 낮을수록 1위 (오름차순 정렬)
+    rank_data = sorted(rank_data, key=lambda x: x["사용률(%)"])
+
 # -----------------------------------------------------------------------------
-# 5. 커스텀 반원 게이지 차트 (50% 노란색, 90% 빨간색 마커 바 적용)
+# 5. 커스텀 반원 게이지 차트 
 # -----------------------------------------------------------------------------
 def make_gauge(val, target, title, unit, is_forecast=False):
     if target <= 0: target = val * 1.2 if val > 0 else 100
@@ -170,10 +205,9 @@ def make_gauge(val, target, title, unit, is_forecast=False):
             'axis': {'range': [0, target], 'tickwidth': 1, 'tickcolor': "darkblue"},
             'bar': {'color': "#1E90FF"},
             'bgcolor': "#E0E0E0",
-            # 기존 빨간선(threshold) 삭제, 대신 50%와 90% 위치에 얇은 스텝(경계선 바) 추가
             'steps': [
-                {'range': [target * 0.495, target * 0.505], 'color': "#FFC107"}, # 50% 노란색 바
-                {'range': [target * 0.895, target * 0.905], 'color': "#FF3B30"}  # 90% 빨간색 바
+                {'range': [target * 0.495, target * 0.505], 'color': "#FFC107"},
+                {'range': [target * 0.895, target * 0.905], 'color': "#FF3B30"} 
             ]
         }
     ))
@@ -192,7 +226,6 @@ def make_gauge(val, target, title, unit, is_forecast=False):
 # -----------------------------------------------------------------------------
 # 6. 메인 화면 UI
 # -----------------------------------------------------------------------------
-# 타이틀(48px)과 유반장(44px) 크기 조정 및 배치
 logo_b64 = get_image_base64(["코퍼레이트_심볼_2.jpg", "코퍼레이트_심볼.jpg", "코퍼레이트_심볼.png"])
 yubanjang_b64 = get_image_base64(["유반장.jpg", "유반장.png"])
 
@@ -200,17 +233,39 @@ logo_html = f'<img src="data:image/jpeg;base64,{logo_b64}" style="height: 48px; 
 yubanjang_html = f'<img src="data:image/jpeg;base64,{yubanjang_b64}" style="height: 44px; object-fit: contain;">' if yubanjang_b64 else ""
 
 st.markdown(f"""
-<div style='display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 40px;'>
-    <div style='flex: 1;'></div> <!-- 좌측 여백 -->
+<div style='display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 20px;'>
+    <div style='flex: 1;'></div> 
     <div style='flex: 2; display: flex; justify-content: center; align-items: center;'>
         {logo_html}
-        <span style='font-size: 48px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -2px;'> BEMS 통합 모니터링</span>
+        <span style='font-size: 48px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -2px;'> REMS 통합 모니터링</span>
     </div>
     <div style='flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 20px;'>
         {yubanjang_html}
     </div>
 </div>
 """, unsafe_allow_html=True)
+
+# 🏆 [추가] 절감률 순위 보기 토글
+if st.toggle("🏆 우수 본부 절감률 순위 보기 (목표 대비 달성률 기준)", value=False):
+    st.markdown("### 🥇 온실가스 절감 우수 본부 TOP 3")
+    if len(rank_data) >= 3:
+        medals = [("🥇 1위", "#FFD700", rank_data[0]), ("🥈 2위", "#C0C0C0", rank_data[1]), ("🥉 3위", "#CD7F32", rank_data[2])]
+        r_cols = st.columns(3)
+        for idx, (medal, color, data) in enumerate(medals):
+            with r_cols[idx]:
+                st.markdown(f"""
+                <div style='background-color: {color}20; border: 2px solid {color}; border-radius: 10px; padding: 20px; text-align: center;'>
+                    <h2 style='margin: 0; color: {color}; text-shadow: 1px 1px 2px rgba(0,0,0,0.2);'>{medal}</h2>
+                    <h3 style='margin: 10px 0; color: {KPETRO_GRAY};'>{data['본부명']}</h3>
+                    <p style='margin: 0; font-size: 18px; font-weight: bold;'>목표 대비 사용률: <span style='color: #1E90FF;'>{data['사용률(%)']}%</span></p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+    st.markdown("<br>#### 📋 전체 본부 절감률 랭킹 (1위 ~ 최하위)", unsafe_allow_html=True)
+    df_rank = pd.DataFrame(rank_data)
+    df_rank.index = df_rank.index + 1 
+    st.dataframe(df_rank, use_container_width=True)
+    st.markdown("---")
 
 st.subheader(f"💡 K-PETRO 통합 실적 (누계 - {selected_month} 기준)")
 
@@ -228,14 +283,6 @@ st.markdown(f"""
 st.markdown("---")
 
 tab1, tab2, tab3, tab4 = st.tabs(["☁️ 온실가스 배출량", "⚡ 전력사용량", "💧 용수사용량", "📈 연간 달성 예측치"])
-
-if group_col:
-    df_grouped = df_filtered.groupby(group_col).sum(numeric_only=True).reset_index()
-    df_target_grouped = df_target.groupby(group_col).sum(numeric_only=True).reset_index() if group_col in df_target.columns else pd.DataFrame()
-    raw_valid_hqs = [hq for hq in df_grouped[group_col].astype(str).tolist() if hq.strip() != '0' and hq.strip() != '']
-    valid_hqs = sorted(raw_valid_hqs, key=lambda x: target_order.index(x) if x in target_order else 999)
-else:
-    df_grouped, df_target_grouped, valid_hqs = pd.DataFrame(), pd.DataFrame(), []
 
 def render_hq_grid(metric_type, tab_prefix):
     if not valid_hqs:
