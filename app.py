@@ -116,7 +116,7 @@ selected_month = st.sidebar.selectbox("현재 집계 완료(월)", month_list_si
 
 sel_month_num = int(selected_month.replace('월', ''))
 
-# 💡 [수정] 탭 전환형 버튼 구현 (누르면 화면이 랭킹으로 바뀜)
+# 사이드바 랭킹 버튼 (토글 기능)
 st.sidebar.markdown("---")
 st.sidebar.header("🏆 절감률 순위 표시기")
 btn_label = "🔙 메인 대시보드로 돌아가기" if st.session_state.show_ranking else "🏆 절감률 순위 표시"
@@ -238,14 +238,15 @@ def make_gauge(val, target, title, unit, is_forecast=False):
 # -----------------------------------------------------------------------------
 # 6. 메인 화면 UI (타이틀)
 # -----------------------------------------------------------------------------
-left_logo_b64 = get_image_base64(["한글상하조합.jpg", "한글상하조합.png"])
+# 💡 [수정] 양옆 이미지 크기를 96px로 2배 확대 및 텍스트 색상 통일 적용
+left_logo_b64 = get_image_base64(["한글상하조합_2.jpg", "한글상하조합.jpg", "한글상하조합.png"])
 yubanjang_b64 = get_image_base64(["유반장.jpg", "유반장.png"])
 
-left_html = f'<img src="data:image/jpeg;base64,{left_logo_b64}" style="height: 48px; object-fit: contain;">' if left_logo_b64 else ""
-yubanjang_html = f'<img src="data:image/jpeg;base64,{yubanjang_b64}" style="height: 48px; object-fit: contain;">' if yubanjang_b64 else ""
+left_html = f'<img src="data:image/jpeg;base64,{left_logo_b64}" style="height: 96px; object-fit: contain;">' if left_logo_b64 else ""
+yubanjang_html = f'<img src="data:image/jpeg;base64,{yubanjang_b64}" style="height: 96px; object-fit: contain;">' if yubanjang_b64 else ""
 
-# 💡 [수정] HTML 코드가 노출되지 않도록 공백/줄바꿈을 완벽히 제거하여 한 줄로 랜더링
-title_html = f"<div style='display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 20px;'><div style='flex: 1; display: flex; justify-content: flex-start; align-items: center;'>{left_html}</div><div style='flex: 2; display: flex; justify-content: center; align-items: center;'><span style='font-size: 48px; font-weight: 900; color: {KPETRO_GREEN}; letter-spacing: -1px;'>K-REMS</span><span style='font-size: 48px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -2px;'>&nbsp;통합 모니터링</span></div><div style='flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 20px;'>{yubanjang_html}</div></div>"
+# 줄바꿈 없이 한 줄로 작성하여 Streamlit 렌더링 에러 방지
+title_html = f"<div style='display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 20px;'><div style='flex: 1; display: flex; justify-content: flex-start; align-items: center; padding-left: 10px;'>{left_html}</div><div style='flex: 2; display: flex; justify-content: center; align-items: center;'><span style='font-size: 48px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -1.5px;'>K-REMS 통합 모니터링</span></div><div style='flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 10px;'>{yubanjang_html}</div></div>"
 st.markdown(title_html, unsafe_allow_html=True)
 
 # =============================================================================
@@ -272,7 +273,6 @@ if st.session_state.show_ranking:
                 
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # 💡 [수정] 1위~최하위 표를 아코디언(Expander)으로 접어두기
     with st.expander("📊 전 본부 절감률 순위확인 (클릭하여 펼치기)"):
         df_rank = pd.DataFrame(rank_data)
         df_rank.index = df_rank.index + 1 
@@ -413,7 +413,7 @@ else:
                             st.plotly_chart(make_gauge(pred_water, t_water, f"{hq_name}", "ton", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
 
     with tab1:
-        st.subheader(f"☁️ 본부별 온실가스 배출량 상세 실적 (누계 - {selected_month})")
+        st.subheader(f"☁️️ 본부별 온실가스 배출량 상세 실적 (누계 - {selected_month})")
         render_hq_grid("GHG", "tab1")
 
     with tab2:
