@@ -35,6 +35,12 @@ def get_image_base64(filenames):
     return None
 
 # -----------------------------------------------------------------------------
+# 세션 상태 초기화 (순위표 토글용)
+# -----------------------------------------------------------------------------
+if 'show_ranking' not in st.session_state:
+    st.session_state.show_ranking = False
+
+# -----------------------------------------------------------------------------
 # 2. 데이터 로드 및 전처리
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60)
@@ -72,7 +78,7 @@ else:
     hq_list = target_order
 
 # -----------------------------------------------------------------------------
-# 3. 사이드바 (실적 직접 입력 제어판 & 시뮬레이터)
+# 3. 사이드바 (실적 직접 입력 제어판 & 시뮬레이터 & 랭킹 버튼)
 # -----------------------------------------------------------------------------
 with st.sidebar.expander("⚙️ 관리자 제어판 (본부별 실적입력)", expanded=True):
     st.markdown("웹에서 실적을 입력하면 구글 DB에 실시간 연동됩니다.")
@@ -109,6 +115,12 @@ month_list_sim = [f"{i}월" for i in range(1, 13)]
 selected_month = st.sidebar.selectbox("현재 집계 완료(월)", month_list_sim, index=8)
 
 sel_month_num = int(selected_month.replace('월', ''))
+
+# 💡 [수정] 사이드바 랭킹 버튼 (토글 기능)
+st.sidebar.markdown("---")
+st.sidebar.header("🏆 절감률 순위 표시기")
+if st.sidebar.button("순위표 토글 (On/Off)", use_container_width=True):
+    st.session_state.show_ranking = not st.session_state.show_ranking
 
 if '월' in df_actual.columns:
     df_actual['월_num'] = pd.to_numeric(df_actual['월'].astype(str).str.replace('월', '').str.strip(), errors='coerce').fillna(0).astype(int)
@@ -226,18 +238,21 @@ def make_gauge(val, target, title, unit, is_forecast=False):
 # -----------------------------------------------------------------------------
 # 6. 메인 화면 UI
 # -----------------------------------------------------------------------------
-logo_b64 = get_image_base64(["코퍼레이트_심볼_2.jpg", "코퍼레이트_심볼.jpg", "코퍼레이트_심볼.png"])
+# 💡 [수정] 좌우 이미지 모두 48px로 완벽 동기화 및 메인 타이틀 텍스트화
+left_logo_b64 = get_image_base64(["한글상하조합.jpg", "한글상하조합.png"])
 yubanjang_b64 = get_image_base64(["유반장.jpg", "유반장.png"])
 
-logo_html = f'<img src="data:image/jpeg;base64,{logo_b64}" style="height: 48px; margin-right: 15px;">' if logo_b64 else f"<span style='font-size: 48px; font-weight: 900; color: {KPETRO_GREEN};'>K-PETRO</span>"
-yubanjang_html = f'<img src="data:image/jpeg;base64,{yubanjang_b64}" style="height: 44px; object-fit: contain;">' if yubanjang_b64 else ""
+left_html = f'<img src="data:image/jpeg;base64,{left_logo_b64}" style="height: 48px; object-fit: contain;">' if left_logo_b64 else ""
+yubanjang_html = f'<img src="data:image/jpeg;base64,{yubanjang_b64}" style="height: 48px; object-fit: contain;">' if yubanjang_b64 else ""
 
 st.markdown(f"""
 <div style='display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 20px;'>
-    <div style='flex: 1;'></div> 
+    <div style='flex: 1; display: flex; justify-content: flex-start; align-items: center;'>
+        {left_html}
+    </div> 
     <div style='flex: 2; display: flex; justify-content: center; align-items: center;'>
-        {logo_html}
-        <span style='font-size: 48px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -2px;'> REMS 통합 모니터링</span>
+        <span style='font-size: 48px; font-weight: 900; color: {KPETRO_GREEN}; letter-spacing: -1px;'>K-REMS</span>
+        <span style='font-size: 48px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -2px;'>&nbsp;통합 모니터링</span>
     </div>
     <div style='flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 20px;'>
         {yubanjang_html}
@@ -245,8 +260,8 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# 🏆 [추가] 절감률 순위 보기 토글
-if st.toggle("🏆 우수 본부 절감률 순위 보기 (목표 대비 달성률 기준)", value=False):
+# 🏆 [수정] 사이드바 버튼 클릭 시 나타나는 랭킹 보드 (하단 반원 그래프 추가)
+if st.session_state.show_ranking:
     st.markdown("### 🥇 온실가스 절감 우수 본부 TOP 3")
     if len(rank_data) >= 3:
         medals = [("🥇 1위", "#FFD700", rank_data[0]), ("🥈 2위", "#C0C0C0", rank_data[1]), ("🥉 3위", "#CD7F32", rank_data[2])]
@@ -254,12 +269,15 @@ if st.toggle("🏆 우수 본부 절감률 순위 보기 (목표 대비 달성�
         for idx, (medal, color, data) in enumerate(medals):
             with r_cols[idx]:
                 st.markdown(f"""
-                <div style='background-color: {color}20; border: 2px solid {color}; border-radius: 10px; padding: 20px; text-align: center;'>
+                <div style='background-color: {color}20; border: 2px solid {color}; border-radius: 10px; padding: 20px; text-align: center; margin-bottom: 15px;'>
                     <h2 style='margin: 0; color: {color}; text-shadow: 1px 1px 2px rgba(0,0,0,0.2);'>{medal}</h2>
                     <h3 style='margin: 10px 0; color: {KPETRO_GRAY};'>{data['본부명']}</h3>
                     <p style='margin: 0; font-size: 18px; font-weight: bold;'>목표 대비 사용률: <span style='color: #1E90FF;'>{data['사용률(%)']}%</span></p>
                 </div>
                 """, unsafe_allow_html=True)
+                
+                # 💡 [핵심] 순위 박스 바로 아래에 해당 본부의 온실가스 반원 그래프 띄우기
+                st.plotly_chart(make_gauge(data['현재배출량(tCO2eq)'], data['목표량(tCO2eq)'], f"{data['본부명']} 온실가스", "tCO2eq"), use_container_width=True, key=f"rank_gauge_{idx}")
                 
     st.markdown("<br>#### 📋 전체 본부 절감률 랭킹 (1위 ~ 최하위)", unsafe_allow_html=True)
     df_rank = pd.DataFrame(rank_data)
