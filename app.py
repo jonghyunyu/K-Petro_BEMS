@@ -254,7 +254,7 @@ yubanjang_b64 = get_image_base64(["유반장.jpg", "유반장.png"])
 
 # 💡 깃허브에 파일이 없으면 안내 문구를 띄워 원인 파악을 돕습니다.
 if left_logo_b64:
-    left_html = f'<img src="data:image/jpeg;base64,{left_logo_b64}" style="height: 96px; object-fit: contain;">'
+    left_html = f'<img src="data:image/jpeg;base64,{left_logo_b64}" style="height: 70px; object-fit: contain;">'
 else:
     left_html = f"<span style='color: #aaa; font-size: 14px;'>[로고 이미지 깃허브 업로드 필요]</span>"
 
