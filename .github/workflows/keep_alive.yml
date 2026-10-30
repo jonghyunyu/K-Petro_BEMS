@@ -1,0 +1,36 @@
+name: Keep K-REMS App Awake
+
+on:
+  schedule:
+    - cron: '30 22 * * *'
+  workflow_dispatch:
+
+jobs:
+  wake-up:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright & Wake Up App
+        run: |
+          npm init -y
+          npm install playwright
+          npx playwright install chromium --with-deps
+          node -e '
+          const { chromium } = require("playwright");
+          (async () => {
+            const browser = await chromium.launch();
+            const page = await browser.newPage();
+            await page.goto("https://kpetro-bems.streamlit.app", { waitUntil: "domcontentloaded", timeout: 60000 });
+            await page.waitForTimeout(10000);
+            const button = page.locator("button:has-text(\"Yes, get this app back up\")");
+            if (await button.count() > 0) {
+              await button.click();
+              await page.waitForTimeout(15000);
+            }
+            await browser.close();
+          })();
+          '
