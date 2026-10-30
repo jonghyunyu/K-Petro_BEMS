@@ -362,6 +362,64 @@ else:
                         elif metric_type == "WATER":
                             st.plotly_chart(make_gauge(r_water, t_water, f"{disp_name}", "ton"), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
 
+    # -------------------------------------------------------------------------
+    # 연간 달성 예측 (2026-10 개선: 2025·2026 실적 백테스트로 선정)
+    #  - 전력·도시가스: 올해 누계 + 작년 남은 달 x 증감률
+    #      증감률 = (누계 증감률 + 최근 3개월 증감률) / 2, 0.7~1.3배로 제한
+    #  - 실내등유: 구매 시점이 불규칙 -> 작년 남은 달 사용량 그대로
+    #  - 온실가스: 전력·가스·등유 예측값을 각각 배출계수로 환산해 합산
+    #  - 용수: (작년 기반 증감률 예측 + 올해 월평균 x 남은 달) / 2
+    #          고지서가 늦게 오는 달(올해 0, 작년 값 있음)은 미입력으로 보고 예측 대상에 포함
+    # -------------------------------------------------------------------------
+    EF = {'전력사용량': 0.0004594106, '도시가스사용량': 0.002187587, '실내등유사용량': 0.0024652936}
+
+    def _monthly(df, hq, col):
+        if df is None or df.empty or col not in df.columns or group_col not in df.columns or '월_num' not in df.columns:
+            return {}
+        d = df[df[group_col].astype(str) == hq]
+        return {int(k): float(v) for k, v in d.groupby('월_num')[col].sum().items()}
+
+    def _ratio(cur, prev, months):
+        def r(ms):
+            p = sum(prev.get(m, 0) for m in ms)
+            return (sum(cur.get(m, 0) for m in ms) / p) if p > 0 else None
+        a, b = r(months), r(months[-3:])
+        if a is None and b is None:
+            return 1.0
+        v = a if b is None else b if a is None else 0.5 * a + 0.5 * b
+        return min(max(v, 0.7), 1.3)
+
+    def _forecast_item(hq, col):
+        cur, prev = _monthly(df_actual, hq, col), _monthly(df_2025, hq, col)
+        n = sel_month_num
+        upto = list(range(1, n + 1))
+        if col == '용수사용량':
+            done = [m for m in upto if cur.get(m, 0) > 0 or prev.get(m, 0) == 0]
+        else:
+            done = upto
+        rest = [m for m in range(1, 13) if m not in done]
+        ytd = sum(cur.get(m, 0) for m in done)
+        if not done:
+            return ytd
+        has_prev = sum(prev.values()) > 0
+        if col == '실내등유사용량':
+            return ytd + sum(prev.get(m, 0) for m in rest)
+        by_avg = ytd + ytd / len(done) * len(rest)
+        if not has_prev:
+            return by_avg
+        by_ratio = ytd + sum(prev.get(m, 0) for m in rest) * _ratio(cur, prev, done)
+        if col == '용수사용량':
+            return 0.5 * by_ratio + 0.5 * by_avg
+        return by_ratio
+
+    def forecast_hq(hq):
+        e = _forecast_item(hq, '전력사용량')
+        g = _forecast_item(hq, '도시가스사용량')
+        k = _forecast_item(hq, '실내등유사용량')
+        w = _forecast_item(hq, '용수사용량')
+        ghg = e * EF['전력사용량'] + g * EF['도시가스사용량'] + k * EF['실내등유사용량']
+        return e, ghg, w
+
     def render_forecast_grid(metric_type, tab_prefix):
         if not valid_hqs:
             st.info("표시할 본부별 데이터가 없습니다.")
@@ -382,42 +440,7 @@ else:
                     curr_water = float(row.get('용수사용량', 0))
                     curr_ghg = (curr_elec * 0.0004594106) + (curr_gas * 0.002187587) + (curr_kero * 0.0024652936)
                     
-                    prev_past_elec = prev_future_elec = 0
-                    prev_past_ghg = prev_future_ghg = 0
-                    prev_past_water = prev_future_water = 0
-                    
-                    if not df_2025.empty and group_col in df_2025.columns:
-                        hq_2025 = df_2025[df_2025[group_col].astype(str) == hq_name]
-                        if not hq_2025.empty and '월_num' in hq_2025.columns:
-                            hq_2025_past = hq_2025[hq_2025['월_num'] <= sel_month_num]
-                            hq_2025_future = hq_2025[hq_2025['월_num'] > sel_month_num]
-                            
-                            prev_past_elec = float(hq_2025_past['전력사용량'].sum()) if '전력사용량' in hq_2025_past else 0
-                            prev_future_elec = float(hq_2025_future['전력사용량'].sum()) if '전력사용량' in hq_2025_future else 0
-                            
-                            p_e = prev_past_elec
-                            p_g = float(hq_2025_past['도시가스사용량'].sum()) if '도시가스사용량' in hq_2025_past else 0
-                            p_k = float(hq_2025_past['실내등유사용량'].sum()) if '실내등유사용량' in hq_2025_past else 0
-                            prev_past_ghg = (p_e * 0.0004594106) + (p_g * 0.002187587) + (p_k * 0.0024652936)
-                            
-                            f_e = prev_future_elec
-                            f_g = float(hq_2025_future['도시가스사용량'].sum()) if '도시가스사용량' in hq_2025_future else 0
-                            f_k = float(hq_2025_future['실내등유사용량'].sum()) if '실내등유사용량' in hq_2025_future else 0
-                            prev_future_ghg = (f_e * 0.0004594106) + (f_g * 0.002187587) + (f_k * 0.0024652936)
-                            
-                            prev_past_water = float(hq_2025_past['용수사용량'].sum()) if '용수사용량' in hq_2025_past else 0
-                            prev_future_water = float(hq_2025_future['용수사용량'].sum()) if '용수사용량' in hq_2025_future else 0
-
-                    def get_forecast(curr, prev_past, prev_future):
-                        if prev_past > 0:
-                            trend_rate = curr / prev_past
-                            return curr + (prev_future * trend_rate)
-                        else:
-                            return curr * (12 / sel_month_num) if sel_month_num > 0 else curr
-
-                    pred_elec = get_forecast(curr_elec, prev_past_elec, prev_future_elec)
-                    pred_ghg = get_forecast(curr_ghg, prev_past_ghg, prev_future_ghg)
-                    pred_water = get_forecast(curr_water, prev_past_water, prev_future_water)
+                    pred_elec, pred_ghg, pred_water = forecast_hq(hq_name)
                     
                     if not df_target_grouped.empty and hq_name in df_target_grouped[group_col].values:
                         t_row = df_target_grouped[df_target_grouped[group_col] == hq_name].iloc[0]
