@@ -1,0 +1,470 @@
+import streamlit as st
+import pandas as pd
+import gspread
+from google.oauth2.service_account import Credentials
+import plotly.graph_objects as go
+import plotly.express as px
+from datetime import datetime
+import os
+import base64
+
+# -----------------------------------------------------------------------------
+# 1. 페이지 기본 설정 및 구글 API 클라이언트 연결
+# -----------------------------------------------------------------------------
+st.set_page_config(page_title="K-REMS 통합 모니터링", page_icon="🏢", layout="wide")
+
+# K-PETRO CI Official Colors
+KPETRO_GREEN = "#8CC63F"
+KPETRO_GRAY = "#54585A"
+
+def get_client():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+    return gspread.authorize(creds)
+
+SHEET_ID = "1Ky6Brrh5pWXuDvAXV36SSQ2MBAjtxr__UbY8fU3viBY"
+
+def get_image_base64(filenames):
+    for fname in filenames:
+        if os.path.exists(fname):
+            with open(fname, "rb") as f:
+                return base64.b64encode(f.read()).decode()
+    return None
+
+# 본부명 뒤에 자동으로 '본부'를 붙여주는 스마트 포맷팅 함수
+def format_hq_name(name):
+    if name in ['미래기술연구소', '본사·수도권남부']:
+        return name
+    if not name.endswith('본부'):
+        return name + '본부'
+    return name
+
+# -----------------------------------------------------------------------------
+# 세션 상태 초기화 (탭 전환용)
+# -----------------------------------------------------------------------------
+if 'show_ranking' not in st.session_state:
+    st.session_state.show_ranking = False
+
+# -----------------------------------------------------------------------------
+# 2. 데이터 로드 및 전처리
+# -----------------------------------------------------------------------------
+@st.cache_data(ttl=60)
+def load_data():
+    client = get_client()
+    doc = client.open_by_key(SHEET_ID)
+    
+    df_actual = pd.DataFrame(doc.worksheet("월간실적").get_all_records())
+    df_2025 = pd.DataFrame(doc.worksheet("2025실적").get_all_records())
+    df_target = pd.DataFrame(doc.worksheet("목표치관리").get_all_records())
+    
+    exclude_cols = ['연도', '월', '구분', '날짜', '지사', '본부', '지역', '사업장', '본부명', '입력시간'] 
+    for df in [df_actual, df_2025, df_target]:
+        for col in df.columns:
+            if col not in exclude_cols:
+                df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                
+    return df_actual, df_2025, df_target
+
+try:
+    df_actual, df_2025, df_target = load_data()
+except Exception as e:
+    st.error(f"데이터 로드 중 에러가 발생했습니다: {e}")
+    st.stop()
+
+# 대시보드 기준 연도 (해가 바뀌면 이 숫자와 '2025실적' 탭 등을 함께 바꿔주세요)
+REPORT_YEAR = 2026
+# 한전 자동 수집이 다음 해 실적 행(예: 2027년 1월)을 미리 만들기 때문에 올해 행만 사용
+# (연도 칸이 비어 있는 기존 행은 올해 행으로 간주)
+if '연도' in df_actual.columns:
+    _years = pd.to_numeric(df_actual['연도'].astype(str).str.strip(), errors='coerce')
+    df_actual = df_actual[_years.isna() | (_years == REPORT_YEAR)].copy()
+
+possible_cols = ['본부명', '본부', '지사', '사업장', '구분', '지역']
+group_col = next((c for c in possible_cols if c in df_actual.columns), None)
+
+target_order = ['본사·수도권남부', '미래기술연구소', '수도권북부', '대전세종충남', '충북', '전남광주', '전북', '부산울산경남', '대구경북', '강원', '제주']
+
+if group_col and not df_actual[group_col].dropna().empty:
+    raw_hqs = [x for x in df_actual[group_col].unique() if str(x).strip() != '']
+    hq_list = sorted(raw_hqs, key=lambda x: target_order.index(x) if x in target_order else 999)
+else:
+    hq_list = target_order
+
+# -----------------------------------------------------------------------------
+# 3. 사이드바 (실적 직접 입력 제어판 & 시뮬레이터 & 탭 전환 버튼)
+# -----------------------------------------------------------------------------
+with st.sidebar.expander("⚙️ 관리자 제어판 (본부별 실적입력)", expanded=True):
+    st.markdown("웹에서 실적을 입력하면 구글 DB에 실시간 연동됩니다.")
+    with st.form("data_input_form", clear_on_submit=True):
+        input_month = st.selectbox("입력 대상 월", [f"{i}월" for i in range(1, 13)])
+        input_hq = st.selectbox("본부(지사) 선택", hq_list)
+        
+        input_elec = st.number_input("전력사용량 (kWh)", min_value=0.0, step=100.0)
+        input_gas = st.number_input("도시가스사용량 (m3)", min_value=0.0, step=10.0)
+        input_kero = st.number_input("실내등유사용량 (L)", min_value=0.0, step=10.0)
+        input_water = st.number_input("용수사용량 (ton)", min_value=0.0, step=10.0)
+        
+        submitted = st.form_submit_button("실적 DB 등록 (구글시트 연동)")
+        
+        if submitted:
+            try:
+                client = get_client()
+                doc = client.open_by_key(SHEET_ID)
+                ws = doc.worksheet("월간실적")
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                row_data = [REPORT_YEAR, input_month, input_hq, input_elec, input_water, input_gas, input_kero, now_str]
+                ws.append_row(row_data)
+                
+                st.success(f"{input_hq} {input_month} 실적이 성공적으로 전송되었습니다!")
+                st.cache_data.clear() 
+                st.rerun() 
+            except Exception as e:
+                st.error(f"구글 시트 연동 중 에러 발생: {e}")
+
+# 💡 [수정] 사이드바 제목 1: '실적달성 시뮬레이터' (19px, 한 줄 꽉 차게)
+st.sidebar.markdown("---")
+st.sidebar.markdown("<div style='font-size: 19px; font-weight: bold; letter-spacing: -1px; margin-bottom: 10px;'>📈 실적달성 시뮬레이터</div>", unsafe_allow_html=True)
+
+month_list_sim = [f"{i}월" for i in range(1, 13)]
+selected_month = st.sidebar.selectbox("현재 집계 완료(월)", month_list_sim, index=8)
+
+sel_month_num = int(selected_month.replace('월', ''))
+
+# 💡 [수정] 사이드바 제목 2: '온실가스 절감률 순위 표시' (19px, 크기 동일화, 한 줄 꽉 차게)
+st.sidebar.markdown("---")
+st.sidebar.markdown("<div style='font-size: 19px; font-weight: bold; letter-spacing: -1px; margin-bottom: 10px;'>🏆 온실가스 절감률 순위 표시</div>", unsafe_allow_html=True)
+
+btn_label = "🔙 메인 대시보드로 돌아가기" if st.session_state.show_ranking else "🏆 온실가스 절감률 순위 확인"
+if st.sidebar.button(btn_label, use_container_width=True, key="rank_toggle_button"):
+    st.session_state.show_ranking = not st.session_state.show_ranking
+    st.rerun()
+
+if '월' in df_actual.columns:
+    df_actual['월_num'] = pd.to_numeric(df_actual['월'].astype(str).str.replace('월', '').str.strip(), errors='coerce').fillna(0).astype(int)
+    df_filtered = df_actual[(df_actual['월_num'] > 0) & (df_actual['월_num'] <= sel_month_num)]
+else:
+    df_filtered = df_actual
+
+if not df_2025.empty and '월' in df_2025.columns:
+    df_2025['월_num'] = pd.to_numeric(df_2025['월'].astype(str).str.replace('월', '').str.strip(), errors='coerce').fillna(0).astype(int)
+
+# -----------------------------------------------------------------------------
+# 4. 연산 (총괄 및 본부별 실적/랭킹 계산)
+# -----------------------------------------------------------------------------
+total_elec = float(df_filtered['전력사용량'].sum()) if '전력사용량' in df_filtered.columns else 0.0
+total_gas = float(df_filtered['도시가스사용량'].sum()) if '도시가스사용량' in df_filtered.columns else 0.0
+total_kero = float(df_filtered['실내등유사용량'].sum()) if '실내등유사용량' in df_filtered.columns else 0.0
+total_water = float(df_filtered['용수사용량'].sum()) if '용수사용량' in df_filtered.columns else 0.0
+
+total_ghg = (total_elec * 0.0004594106) + (total_gas * 0.002187587) + (total_kero * 0.0024652936)
+
+target_elec = float(df_target['전력목표_연간'].sum()) if '전력목표_연간' in df_target.columns else 0.0
+target_ghg = float(df_target['온실가스목표_연간'].sum()) if '온실가스목표_연간' in df_target.columns else 0.0
+target_water = float(df_target['용수목표_연간'].sum()) if '용수목표_연간' in df_target.columns else 0.0
+
+if target_elec == 0: target_elec = 100000.0
+if target_ghg == 0: target_ghg = 5000.0
+if target_water == 0: target_water = 10000.0
+
+ghg_reduction = target_ghg - total_ghg
+ghg_reduction_display = ghg_reduction if ghg_reduction > 0 else 0
+pine_trees = int(ghg_reduction_display * 6.6)
+
+if group_col:
+    df_grouped = df_filtered.groupby(group_col).sum(numeric_only=True).reset_index()
+    df_target_grouped = df_target.groupby(group_col).sum(numeric_only=True).reset_index() if group_col in df_target.columns else pd.DataFrame()
+    raw_valid_hqs = [hq for hq in df_grouped[group_col].astype(str).tolist() if hq.strip() != '0' and hq.strip() != '']
+    valid_hqs = sorted(raw_valid_hqs, key=lambda x: target_order.index(x) if x in target_order else 999)
+else:
+    df_grouped, df_target_grouped, valid_hqs = pd.DataFrame(), pd.DataFrame(), []
+
+rank_data = []
+if valid_hqs:
+    for hq_name in valid_hqs:
+        row = df_grouped[df_grouped[group_col].astype(str) == hq_name].iloc[0]
+        r_elec = float(row.get('전력사용량', 0))
+        r_gas = float(row.get('도시가스사용량', 0))
+        r_kero = float(row.get('실내등유사용량', 0))
+        r_ghg = (r_elec * 0.0004594106) + (r_gas * 0.002187587) + (r_kero * 0.0024652936)
+        
+        if not df_target_grouped.empty and hq_name in df_target_grouped[group_col].values:
+            t_row = df_target_grouped[df_target_grouped[group_col] == hq_name].iloc[0]
+            t_ghg = float(t_row.get('온실가스목표_연간', 0))
+            if t_ghg == 0: t_ghg = r_ghg * 1.5
+        else:
+            t_ghg = r_ghg * 1.5
+            
+        achievement_rate = (r_ghg / t_ghg * 100) if t_ghg > 0 else 0
+        
+        disp_name = format_hq_name(hq_name)
+        rank_data.append({
+            "본부명": disp_name, 
+            "현재배출량(tCO2eq)": round(r_ghg, 1),
+            "목표량(tCO2eq)": round(t_ghg, 1),
+            "사용률(%)": round(achievement_rate, 1)
+        })
+    rank_data = sorted(rank_data, key=lambda x: x["사용률(%)"])
+
+# -----------------------------------------------------------------------------
+# 5. 커스텀 반원 게이지 차트 
+# -----------------------------------------------------------------------------
+def make_gauge(val, target, title, unit, is_forecast=False):
+    if target <= 0: target = val * 1.2 if val > 0 else 100
+    remaining = target - val
+    achievement_rate = (val / target * 100) if target > 0 else 0
+    
+    format_str = ",.1f" if unit == 'tCO2eq' else ",.0f"
+    val_str = format(val, format_str)
+    target_str = format(target, format_str)
+    rem_str = format(abs(remaining), format_str)
+    
+    val_label = "예상실적" if is_forecast else "현재실적"
+    
+    if remaining >= 0:
+        center_text = f"<span style='font-size:36px; font-weight:900; color:{KPETRO_GREEN};'>{achievement_rate:.1f}%</span><br><span style='font-size:18px; font-weight:bold; color:{KPETRO_GRAY};'>△ {rem_str} {unit}</span>"
+    else:
+        center_text = f"<span style='font-size:36px; font-weight:900; color:#FF0000;'>{achievement_rate:.1f}%</span><br><span style='font-size:18px; font-weight:bold; color:#FF0000;'>▼ 초과 {rem_str} {unit}</span>"
+
+    fig = go.Figure(go.Indicator(
+        mode = "gauge",
+        value = val,
+        domain = {'x': [0, 1], 'y': [0, 1]},
+        title = {'text': f"<b>{title}</b>", 'font': {'size': 26, 'color': KPETRO_GRAY}},
+        gauge = {
+            'axis': {'range': [0, target], 'tickwidth': 1, 'tickcolor': "darkblue"},
+            'bar': {'color': "#1E90FF"},
+            'bgcolor': "#E0E0E0",
+            'steps': [
+                {'range': [target * 0.495, target * 0.505], 'color': "#FFC107"},
+                {'range': [target * 0.895, target * 0.905], 'color': "#FF3B30"} 
+            ]
+        }
+    ))
+    
+    fig.update_layout(
+        height=340, 
+        margin=dict(l=30, r=30, t=70, b=60),
+        annotations=[
+            dict(x=0.5, y=0.15, xref='paper', yref='paper', text=center_text, showarrow=False, align='center'),
+            dict(x=0.15, y=-0.1, xref='paper', yref='paper', text=f"{val_label}: <b>{val_str}</b>", showarrow=False, font=dict(size=16, color=KPETRO_GRAY), xanchor='center'),
+            dict(x=0.85, y=-0.1, xref='paper', yref='paper', text=f"목표치: <b>{target_str}</b>", showarrow=False, font=dict(size=16, color='red'), xanchor='center')
+        ]
+    )
+    return fig
+
+# -----------------------------------------------------------------------------
+# 6. 메인 화면 UI (타이틀)
+# -----------------------------------------------------------------------------
+left_logo_b64 = get_image_base64(["한글상하조합_2.jpg", "한글상하조합_2.png", "한글상하조합.jpg", "한글상하조합.png"])
+yubanjang_b64 = get_image_base64(["유반장.jpg", "유반장.png"])
+
+if left_logo_b64:
+    left_html = f'<img src="data:image/jpeg;base64,{left_logo_b64}" style="height: 96px; object-fit: contain;">'
+else:
+    left_html = f"<span style='color: #aaa; font-size: 14px;'>[로고 이미지 깃허브 업로드 필요]</span>"
+
+if yubanjang_b64:
+    yubanjang_html = f'<img src="data:image/jpeg;base64,{yubanjang_b64}" style="height: 96px; object-fit: contain;">'
+else:
+    yubanjang_html = ""
+
+title_html = f"<div style='display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 20px;'><div style='flex: 1; display: flex; justify-content: flex-start; align-items: center; padding-left: 10px;'>{left_html}</div><div style='flex: 2; display: flex; justify-content: center; align-items: center;'><span style='font-size: 48px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -1.5px;'>K-REMS 통합 모니터링</span></div><div style='flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 10px;'>{yubanjang_html}</div></div>"
+st.markdown(title_html, unsafe_allow_html=True)
+
+# =============================================================================
+# 7. 화면 분기 (순위표 탭 vs 메인 대시보드 탭)
+# =============================================================================
+if st.session_state.show_ranking:
+    # ------------------ [순위표 탭 화면] ------------------
+    st.markdown(f"### 🥇 2026년 {selected_month} 온실가스 절감 우수 본부 TOP 3")
+    if len(rank_data) >= 3:
+        medals = [("🥇 1위", "#FFD700", rank_data[0]), ("🥈 2위", "#C0C0C0", rank_data[1]), ("🥉 3위", "#CD7F32", rank_data[2])]
+        r_cols = st.columns(3)
+        for idx, (medal, color, data) in enumerate(medals):
+            with r_cols[idx]:
+                st.markdown(f"""
+                <div style='background-color: {color}20; border: 2px solid {color}; border-radius: 10px; padding: 20px; text-align: center; margin-bottom: 15px;'>
+                    <h2 style='margin: 0; color: {color}; text-shadow: 1px 1px 2px rgba(0,0,0,0.2);'>{medal}</h2>
+                    <h3 style='margin: 10px 0; color: {KPETRO_GRAY};'>{data['본부명']}</h3>
+                    <p style='margin: 0; font-size: 18px; font-weight: bold;'>목표 대비 사용률: <span style='color: #1E90FF;'>{data['사용률(%)']}%</span></p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                st.plotly_chart(make_gauge(data['현재배출량(tCO2eq)'], data['목표량(tCO2eq)'], f"{data['본부명']} 온실가스", "tCO2eq"), use_container_width=True, key=f"rank_gauge_{idx}")
+                
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    with st.expander("📊 전 본부 절감률 순위확인 (클릭하여 펼치기)"):
+        df_rank = pd.DataFrame(rank_data)
+        df_rank.index = df_rank.index + 1 
+        st.dataframe(df_rank, use_container_width=True)
+
+else:
+    # ------------------ [메인 대시보드 화면] ------------------
+    st.subheader(f"💡 K-PETRO 통합 실적 (누계 - {selected_month} 기준)")
+
+    g_col1, g_col2, g_col3 = st.columns(3)
+    with g_col1: st.plotly_chart(make_gauge(total_ghg, target_ghg, "총괄 온실가스 배출량", "tCO2eq"), use_container_width=True, key="top_ghg")
+    with g_col2: st.plotly_chart(make_gauge(total_elec, target_elec, "총괄 전력사용량", "kWh"), use_container_width=True, key="top_elec")
+    with g_col3: st.plotly_chart(make_gauge(total_water, target_water, "총괄 용수사용량", "ton"), use_container_width=True, key="top_water")
+
+    st.markdown(f"""
+    <div style='background-color: #E8F5E9; padding: 15px; border-radius: 8px; text-align: center; color: #2E7D32; font-size: 18px; font-weight: bold; margin-bottom: 20px;'>
+        🌱 2026년 {selected_month} 기준 목표치 대비 온실가스 감축량 : {ghg_reduction_display:,.1f} tCO2eq (소나무 {pine_trees:,.0f}그루 식재효과)
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    tab1, tab2, tab3, tab4 = st.tabs(["☁️ 온실가스 배출량", "⚡ 전력사용량", "💧 용수사용량", "📈 연간 달성 예측치"])
+
+    def render_hq_grid(metric_type, tab_prefix):
+        if not valid_hqs:
+            st.info("표시할 본부별 데이터가 없습니다.")
+            return
+            
+        for i in range(0, len(valid_hqs), 3):
+            cols = st.columns(3)
+            for j in range(3):
+                idx = i + j
+                if idx < len(valid_hqs):
+                    hq_name = valid_hqs[idx]
+                    disp_name = format_hq_name(hq_name) 
+                    row = df_grouped[df_grouped[group_col].astype(str) == hq_name].iloc[0]
+                    
+                    r_elec = float(row.get('전력사용량', 0))
+                    r_gas = float(row.get('도시가스사용량', 0))
+                    r_kero = float(row.get('실내등유사용량', 0))
+                    r_water = float(row.get('용수사용량', 0))
+                    r_ghg = (r_elec * 0.0004594106) + (r_gas * 0.002187587) + (r_kero * 0.0024652936)
+                    
+                    if not df_target_grouped.empty and hq_name in df_target_grouped[group_col].values:
+                        t_row = df_target_grouped[df_target_grouped[group_col] == hq_name].iloc[0]
+                        t_elec = float(t_row.get('전력목표_연간', 0))
+                        t_ghg = float(t_row.get('온실가스목표_연간', 0))
+                        t_water = float(t_row.get('용수목표_연간', 0))
+                        
+                        if t_elec == 0: t_elec = r_elec * 1.5
+                        if t_ghg == 0: t_ghg = r_ghg * 1.5
+                        if t_water == 0: t_water = r_water * 1.5
+                    else:
+                        t_elec, t_ghg, t_water = r_elec * 1.5, r_ghg * 1.5, r_water * 1.5
+
+                    with cols[j]:
+                        if metric_type == "GHG":
+                            st.plotly_chart(make_gauge(r_ghg, t_ghg, f"{disp_name}", "tCO2eq"), use_container_width=True, key=f"{tab_prefix}_ghg_{hq_name}")
+                        elif metric_type == "ELEC":
+                            st.plotly_chart(make_gauge(r_elec, t_elec, f"{disp_name}", "kWh"), use_container_width=True, key=f"{tab_prefix}_elec_{hq_name}")
+                        elif metric_type == "WATER":
+                            st.plotly_chart(make_gauge(r_water, t_water, f"{disp_name}", "ton"), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
+
+    def render_forecast_grid(metric_type, tab_prefix):
+        if not valid_hqs:
+            st.info("표시할 본부별 데이터가 없습니다.")
+            return
+            
+        for i in range(0, len(valid_hqs), 3):
+            cols = st.columns(3)
+            for j in range(3):
+                idx = i + j
+                if idx < len(valid_hqs):
+                    hq_name = valid_hqs[idx]
+                    disp_name = format_hq_name(hq_name)
+                    row = df_grouped[df_grouped[group_col].astype(str) == hq_name].iloc[0]
+                    
+                    curr_elec = float(row.get('전력사용량', 0))
+                    curr_gas = float(row.get('도시가스사용량', 0))
+                    curr_kero = float(row.get('실내등유사용량', 0))
+                    curr_water = float(row.get('용수사용량', 0))
+                    curr_ghg = (curr_elec * 0.0004594106) + (curr_gas * 0.002187587) + (curr_kero * 0.0024652936)
+                    
+                    prev_past_elec = prev_future_elec = 0
+                    prev_past_ghg = prev_future_ghg = 0
+                    prev_past_water = prev_future_water = 0
+                    
+                    if not df_2025.empty and group_col in df_2025.columns:
+                        hq_2025 = df_2025[df_2025[group_col].astype(str) == hq_name]
+                        if not hq_2025.empty and '월_num' in hq_2025.columns:
+                            hq_2025_past = hq_2025[hq_2025['월_num'] <= sel_month_num]
+                            hq_2025_future = hq_2025[hq_2025['월_num'] > sel_month_num]
+                            
+                            prev_past_elec = float(hq_2025_past['전력사용량'].sum()) if '전력사용량' in hq_2025_past else 0
+                            prev_future_elec = float(hq_2025_future['전력사용량'].sum()) if '전력사용량' in hq_2025_future else 0
+                            
+                            p_e = prev_past_elec
+                            p_g = float(hq_2025_past['도시가스사용량'].sum()) if '도시가스사용량' in hq_2025_past else 0
+                            p_k = float(hq_2025_past['실내등유사용량'].sum()) if '실내등유사용량' in hq_2025_past else 0
+                            prev_past_ghg = (p_e * 0.0004594106) + (p_g * 0.002187587) + (p_k * 0.0024652936)
+                            
+                            f_e = prev_future_elec
+                            f_g = float(hq_2025_future['도시가스사용량'].sum()) if '도시가스사용량' in hq_2025_future else 0
+                            f_k = float(hq_2025_future['실내등유사용량'].sum()) if '실내등유사용량' in hq_2025_future else 0
+                            prev_future_ghg = (f_e * 0.0004594106) + (f_g * 0.002187587) + (f_k * 0.0024652936)
+                            
+                            prev_past_water = float(hq_2025_past['용수사용량'].sum()) if '용수사용량' in hq_2025_past else 0
+                            prev_future_water = float(hq_2025_future['용수사용량'].sum()) if '용수사용량' in hq_2025_future else 0
+
+                    def get_forecast(curr, prev_past, prev_future):
+                        if prev_past > 0:
+                            trend_rate = curr / prev_past
+                            return curr + (prev_future * trend_rate)
+                        else:
+                            return curr * (12 / sel_month_num) if sel_month_num > 0 else curr
+
+                    pred_elec = get_forecast(curr_elec, prev_past_elec, prev_future_elec)
+                    pred_ghg = get_forecast(curr_ghg, prev_past_ghg, prev_future_ghg)
+                    pred_water = get_forecast(curr_water, prev_past_water, prev_future_water)
+                    
+                    if not df_target_grouped.empty and hq_name in df_target_grouped[group_col].values:
+                        t_row = df_target_grouped[df_target_grouped[group_col] == hq_name].iloc[0]
+                        t_elec = float(t_row.get('전력목표_연간', 0))
+                        t_ghg = float(t_row.get('온실가스목표_연간', 0))
+                        t_water = float(t_row.get('용수목표_연간', 0))
+                        
+                        if t_elec == 0: t_elec = curr_elec * 1.2
+                        if t_ghg == 0: t_ghg = curr_ghg * 1.2
+                        if t_water == 0: t_water = curr_water * 1.2
+                    else:
+                        t_elec, t_ghg, t_water = curr_elec * 1.2, curr_ghg * 1.2, curr_water * 1.2
+
+                    with cols[j]:
+                        if metric_type == "GHG":
+                            st.plotly_chart(make_gauge(pred_ghg, t_ghg, f"{disp_name}", "tCO2eq", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_ghg_{hq_name}")
+                        elif metric_type == "ELEC":
+                            st.plotly_chart(make_gauge(pred_elec, t_elec, f"{disp_name}", "kWh", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_elec_{hq_name}")
+                        elif metric_type == "WATER":
+                            st.plotly_chart(make_gauge(pred_water, t_water, f"{disp_name}", "ton", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
+
+    with tab1:
+        st.subheader(f"☁ 본부별 온실가스 배출량 상세 실적 (누계 - {selected_month})")
+        render_hq_grid("GHG", "tab1")
+
+    with tab2:
+        st.subheader(f"⚡ 본부별 전력사용량 상세 실적 (누계 - {selected_month})")
+        render_hq_grid("ELEC", "tab2")
+
+    with tab3:
+        st.subheader(f"💧 본부별 용수사용량 상세 실적 (누계 - {selected_month})")
+        render_hq_grid("WATER", "tab3")
+
+    with tab4:
+        st.subheader("📈 항목별 종합 연간 달성 예측 시뮬레이션")
+        f_tab1, f_tab2, f_tab3 = st.tabs(["☁️ 온실가스 예측치", "⚡ 전력사용량 예측치", "💧 용수사용량 예측치"])
+        
+        with f_tab1:
+            render_forecast_grid("GHG", "forecast_ghg")
+        with f_tab2:
+            render_forecast_grid("ELEC", "forecast_elec")
+        with f_tab3:
+            render_forecast_grid("WATER", "forecast_water")
+
+st.markdown(f"""
+<hr style='border: 1px solid #E0E0E0; margin-top: 50px;'>
+<div style='text-align: center; color: #888888; font-size: 14px; padding-bottom: 20px;'>
+    &copy; 2026 한국석유관리원 운영지원팀. All rights reserved.
+</div>
+""", unsafe_allow_html=True)
