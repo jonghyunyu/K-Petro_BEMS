@@ -74,6 +74,14 @@ except Exception as e:
     st.error(f"데이터 로드 중 에러가 발생했습니다: {e}")
     st.stop()
 
+# 대시보드 기준 연도 (해가 바뀌면 이 숫자와 '2025실적' 탭 등을 함께 바꿔주세요)
+REPORT_YEAR = 2026
+# 한전 자동 수집이 다음 해 실적 행(예: 2027년 1월)을 미리 만들기 때문에 올해 행만 사용
+# (연도 칸이 비어 있는 기존 행은 올해 행으로 간주)
+if '연도' in df_actual.columns:
+    _years = pd.to_numeric(df_actual['연도'].astype(str).str.strip(), errors='coerce')
+    df_actual = df_actual[_years.isna() | (_years == REPORT_YEAR)].copy()
+
 possible_cols = ['본부명', '본부', '지사', '사업장', '구분', '지역']
 group_col = next((c for c in possible_cols if c in df_actual.columns), None)
 
@@ -108,7 +116,7 @@ with st.sidebar.expander("⚙️ 관리자 제어판 (본부별 실적입력)", 
                 ws = doc.worksheet("월간실적")
                 now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
-                row_data = [2026, input_month, input_hq, input_elec, input_water, input_gas, input_kero, now_str]
+                row_data = [REPORT_YEAR, input_month, input_hq, input_elec, input_water, input_gas, input_kero, now_str]
                 ws.append_row(row_data)
                 
                 st.success(f"{input_hq} {input_month} 실적이 성공적으로 전송되었습니다!")
