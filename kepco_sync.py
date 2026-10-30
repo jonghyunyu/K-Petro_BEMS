@@ -6,17 +6,23 @@ app.py 는 건드리지 않습니다. GitHub Actions(kepco_daily.yml)가 매일 
 하는 일
   1) 한전 OPM Open-API(getDayLpData)로 11개 본부 고객번호의 하루 사용량(15분 x 96개)을 받아 합산
   2) 구글시트 '일간전력' 탭에 날짜·본부별로 한 줄씩 기록 (같은 날짜·본부는 덮어씀)
-  3) 그 달의 일간 합계를 '월간실적' 탭의 (연도, 월, 본부명) 행 '전력사용량' 칸에 기록
+  3) 기관의 고지서 입력 방식과 같은 기간(본부별 검침일 기준)으로 합산해 '월간실적' 탭의
+     (연도, 월, 본부명) 행 '전력사용량' 칸에 기록.
+     사용 기간이 정보제공 동의일(KEPCO_START) 이후에 시작하는 달만 자동 기록하고,
+     그 이전 달은 고지서 수기 값을 건드리지 않음
      -> app.py 가 읽는 값이 바뀌므로 반원 그래프와 전력 온실가스가 자동 갱신
 
 필요한 GitHub Secrets
   KEPCO_API_KEY        OPM 'Open API 인증키 목록'의 인증키(서비스키)
   KEPCO_SITES          {"본사·수도권남부": ["0227437841"], ...}  본부명 -> 고객번호 목록
+  KEPCO_METER_DAYS     {"본사·수도권남부": [1, 0], "수도권북부": [5, 1], ...}
+                       본부별 [검침 시작일, 월보정]. 월보정 1 = 시작한 달의 다음 달 실적으로 부름
+                       예) 수도권북부 [5, 1]: 8/5~9/4 사용량 = '9월' 실적
   GCP_SERVICE_ACCOUNT  구글 서비스계정 키 (JSON 그대로, 또는 Streamlit secrets.toml 내용 그대로)
 
 선택 설정 (GitHub Variables 또는 환경변수)
   KEPCO_START          이 날짜 이전은 조회하지 않음 (정보제공 동의일)       기본 2026-10-30
-  MONTHLY_FROM         이 달부터만 '월간실적'에 자동 기록 (이전 달은 수기 값 유지) 기본 2026-11
+  MONTHLY_FROM         (선택) 이 '월' 이전은 자동 기록하지 않음                         기본 2026-01
   KEPCO_MOCK=1         한전 대신 가짜 숫자로 시험
 
 실행 예
@@ -155,7 +161,42 @@ def upsert_daily(ws, day: date, values: dict, now_str: str):
         ws.append_rows(appends, value_input_option="USER_ENTERED")
 
 
-def month_totals(ws, year: int, month: int) -> dict:
+def _meter(meter_days: dict, hq: str):
+    """본부 설정 -> (검침 시작일, 월보정). 예) [5, 1] = 5일부터, 시작 월 +1 을 실적 월로 부름"""
+    v = meter_days.get(hq, 1)
+    if isinstance(v, (list, tuple)):
+        return int(v[0]), int(v[1]) if len(v) > 1 else 0
+    return int(v), 0
+
+
+def _clamp(year: int, month: int, day: int) -> date:
+    import calendar
+    return date(year, month, min(day, calendar.monthrange(year, month)[1]))
+
+
+def _shift(year: int, month: int, n: int):
+    k = year * 12 + (month - 1) + n
+    return k // 12, k % 12 + 1
+
+
+def bill_month(meter_days: dict, hq: str, d: date):
+    """그 날짜가 속하는 실적 '월' (기관 고지서 입력 방식과 동일)
+    예) 수도권북부 [5, 1]: 8/5~9/4 -> 9월 실적 / 본사 [1, 0]: 9/1~9/30 -> 9월 실적"""
+    day, off = _meter(meter_days, hq)
+    sy, sm = (d.year, d.month) if d >= _clamp(d.year, d.month, day) else _shift(d.year, d.month, -1)
+    return _shift(sy, sm, off)
+
+
+def period(meter_days: dict, hq: str, year: int, month: int):
+    """실적 (year, month) 의 사용 기간 (시작일, 종료일)"""
+    day, off = _meter(meter_days, hq)
+    sy, sm = _shift(year, month, -off)
+    ny, nm = _shift(sy, sm, 1)
+    return _clamp(sy, sm, day), _clamp(ny, nm, day) - timedelta(days=1)
+
+
+def month_totals(ws, year: int, month: int, meter_days: dict) -> dict:
+    """일간전력 탭에서 본부별로 고지서 방식 (year, month) 기간의 kWh 합계"""
     totals = {}
     for r in ws.get_all_values()[1:]:
         if len(r) < 3:
@@ -164,7 +205,7 @@ def month_totals(ws, year: int, month: int) -> dict:
             d = date.fromisoformat(r[0])
         except ValueError:
             continue
-        if d.year == year and d.month == month:
+        if bill_month(meter_days, r[1], d) == (year, month):
             totals[r[1]] = totals.get(r[1], 0.0) + (_num(r[2]) or 0.0)
     return totals
 
@@ -231,7 +272,7 @@ def main():
     args = p.parse_args()
 
     start = date.fromisoformat(os.environ.get("KEPCO_START") or "2026-10-30")
-    monthly_from = os.environ.get("MONTHLY_FROM") or "2026-11"
+    monthly_from = os.environ.get("MONTHLY_FROM") or "2026-01"
     mf_y, mf_m = map(int, monthly_from.split("-"))
 
     today = datetime.now(KST).date()
@@ -243,6 +284,10 @@ def main():
         return
 
     sites = json.loads(os.environ["KEPCO_SITES"])
+    meter_days = json.loads(os.environ.get("KEPCO_METER_DAYS") or "{}")
+    missing = [hq for hq in sites if hq not in meter_days]
+    if missing:
+        print(f"※ 검침일 미설정 본부(1일로 간주): {', '.join(missing)}")
     print(f"본부 {len(sites)}곳 · 날짜 {', '.join(map(str, days))}")
 
     doc = None if args.dry_run else get_doc()
@@ -257,17 +302,23 @@ def main():
         fail_total += failed
         if values and not args.dry_run:
             upsert_daily(daily_ws, d, values, now_str)
-            touched.add((d.year, d.month))
+            for hq in values:
+                touched.add(bill_month(meter_days, hq, d))
 
     if not args.dry_run:
         monthly_ws = doc.worksheet(MONTHLY_TAB)
         for y, m in sorted(touched):
             if (y, m) < (mf_y, mf_m):
-                print(f"[{y}-{m:02d}] 월간실적은 수기 입력 유지 (자동 기록은 {monthly_from}부터)")
                 continue
-            totals = month_totals(daily_ws, y, m)
-            write_monthly(monthly_ws, y, m, totals, now_str)
-            print(f"[{y}-{m:02d}] 월간실적 전력사용량 갱신: {len(totals)}개 본부")
+            totals = month_totals(daily_ws, y, m, meter_days)
+            # 사용 기간 전체를 한전 데이터로 받을 수 있는 본부만 자동 기록 (나머지는 고지서 수기 값 유지)
+            auto = {hq: v for hq, v in totals.items() if period(meter_days, hq, y, m)[0] >= start}
+            for hq in sorted(set(totals) - set(auto)):
+                ps, pe = period(meter_days, hq, y, m)
+                print(f"[{y}년 {m}월] {hq}: 기간 {ps}~{pe} 중 동의일 이전이 있어 고지서 수기 입력 유지")
+            if auto:
+                write_monthly(monthly_ws, y, m, auto, now_str)
+                print(f"[{y}년 {m}월] 월간실적 전력사용량 자동 갱신: {', '.join(auto)}")
 
     print(f"완료: 성공 {ok_total}건, 실패 {fail_total}건")
     if ok_total == 0:
