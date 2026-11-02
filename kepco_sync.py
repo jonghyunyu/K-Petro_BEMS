@@ -195,9 +195,10 @@ def period(meter_days: dict, hq: str, year: int, month: int):
     return _clamp(sy, sm, day), _clamp(ny, nm, day) - timedelta(days=1)
 
 
-def month_totals(ws, year: int, month: int, meter_days: dict) -> dict:
-    """일간전력 탭에서 본부별로 고지서 방식 (year, month) 기간의 kWh 합계"""
-    totals = {}
+def month_totals(ws, year: int, month: int, meter_days: dict):
+    """일간전력 탭에서 본부별로 고지서 방식 (year, month) 기간의 kWh 합계와,
+    15분 값이 하나도 없는 날(데이터 미제공일) 목록"""
+    totals, empty = {}, {}
     for r in ws.get_all_values()[1:]:
         if len(r) < 3:
             continue
@@ -207,7 +208,9 @@ def month_totals(ws, year: int, month: int, meter_days: dict) -> dict:
             continue
         if bill_month(meter_days, r[1], d) == (year, month):
             totals[r[1]] = totals.get(r[1], 0.0) + (_num(r[2]) or 0.0)
-    return totals
+            if len(r) > 4 and (_num(r[4]) or 0) == 0:
+                empty.setdefault(r[1], []).append(d)
+    return totals, empty
 
 
 def write_monthly(ws, year: int, month: int, totals: dict, now_str: str):
@@ -310,12 +313,17 @@ def main():
         for y, m in sorted(touched):
             if (y, m) < (mf_y, mf_m):
                 continue
-            totals = month_totals(daily_ws, y, m, meter_days)
+            totals, empty = month_totals(daily_ws, y, m, meter_days)
             # 사용 기간 전체를 한전 데이터로 받을 수 있는 본부만 자동 기록 (나머지는 고지서 수기 값 유지)
             auto = {hq: v for hq, v in totals.items() if period(meter_days, hq, y, m)[0] >= start}
             for hq in sorted(set(totals) - set(auto)):
                 ps, pe = period(meter_days, hq, y, m)
                 print(f"[{y}년 {m}월] {hq}: 기간 {ps}~{pe} 중 동의일 이전이 있어 고지서 수기 입력 유지")
+            # 한전 데이터가 오지 않은 날이 있는 본부는 월 합계가 틀리므로 자동 기록하지 않음
+            for hq in sorted(set(auto) & set(empty)):
+                days_txt = ", ".join(d.strftime("%m/%d") for d in sorted(empty[hq]))
+                print(f"[{y}년 {m}월] ⚠ {hq}: 한전 데이터 미제공일({days_txt})이 있어 자동 기록 보류 → 고지서 수기 입력 필요")
+                auto.pop(hq)
             if auto:
                 write_monthly(monthly_ws, y, m, auto, now_str)
                 print(f"[{y}년 {m}월] 월간실적 전력사용량 자동 갱신: {', '.join(auto)}")
