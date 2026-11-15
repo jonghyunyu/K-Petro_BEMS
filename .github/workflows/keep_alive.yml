@@ -29,7 +29,7 @@ jobs:
           (async () => {
             const browser = await chromium.launch();
             const page = await browser.newPage();
-            await page.goto("https://kpetro-bems.streamlit.app", { waitUntil: "domcontentloaded", timeout: 90000 });
+            await page.goto("https://kpetro-rems.streamlit.app", { waitUntil: "domcontentloaded", timeout: 90000 });
             await page.waitForTimeout(8000);
 
             // 잠든 상태면 깨우기 버튼 클릭 (버튼이 iframe 안에 있을 수도 있어 모든 frame 확인)
