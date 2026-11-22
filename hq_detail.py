@@ -97,7 +97,7 @@ def _pct(cur, prev):
 
 def hq_metrics(ctx, hq):
     """본부 1곳의 누계·전년 동기·전월·목표 수치"""
-    gc, n = ctx["group_col"], ctx["sel_month_num"]
+    gc, n = ctx["group_col"], ctx["hq_last"].get(hq, 0)
     cur = {c: _monthly(ctx["df_actual"], gc, hq, c) for c in ["전력사용량", "도시가스사용량", "실내등유사용량", "용수사용량"]}
     prev = {c: _monthly(ctx["df_2025"], gc, hq, c) for c in cur}
     months = range(1, n + 1)
@@ -539,7 +539,6 @@ def render(ctx):
         st.info("표시할 본부 데이터가 없습니다.")
         return
     fmt = ctx["format_hq_name"]
-    n_month = ctx["sel_month_num"]
 
     # ---------------- 조회 조건
     c1, c2 = st.columns([1, 2])
@@ -548,6 +547,7 @@ def render(ctx):
     with c2:
         mode = st.radio("조회 방식", ["월별 조회", "기간별 조회"], horizontal=True, key="hqd_mode")
     hq_disp = fmt(hq)
+    n_month = ctx["hq_last"].get(hq, 0)
 
     today = date.today()
     hq_days = daily[daily["본부명"] == hq]["날짜"]
@@ -579,7 +579,8 @@ def render(ctx):
     # ---------------- ① 본부 요약
     per_hq, total, ranking = company_metrics(ctx)
     m = per_hq[hq]
-    st.markdown(f"#### ① {hq_disp} 누계 실적 (2026년 1~{n_month}월, 목표 대비)")
+    period_txt = f"2026년 1~{n_month}월" if n_month else "입력 완료된 달 없음"
+    st.markdown(f"#### ① {hq_disp} 누계 실적 ({period_txt}, 목표 대비)")
     gcols = st.columns(3)
     specs = [("온실가스", "온실가스 배출량", "tCO2eq"), ("전력", "전력사용량", "kWh"), ("용수", "용수사용량", "ton")]
     for col, (key, title, unit) in zip(gcols, specs):
@@ -592,7 +593,7 @@ def render(ctx):
                 f"{_delta_html('전년 동기', x['yoy'])} &nbsp;|&nbsp; {_delta_html(f'{n_month}월 전월비', x['mom'])}"
                 f"<br><span style='color:{KPETRO_GRAY}'>전사 대비 비중 <b>{share:.1f}%</b></span></div>",
                 unsafe_allow_html=True)
-    st.caption(f"※ 누계 기준 월은 왼쪽 '실적달성 시뮬레이터 > 현재 집계 완료(월)'을 따릅니다. 전년 동기 = 2025년 1~{n_month}월.")
+    st.caption(f"※ 누계 기준 월 = 이 본부의 필수 항목 입력이 끝난 가장 최근 달({n_month}월). 전년 동기 = 2025년 같은 기간.")
 
     st.markdown("---")
 

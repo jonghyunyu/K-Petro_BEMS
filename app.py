@@ -46,8 +46,8 @@ def format_hq_name(name):
 # -----------------------------------------------------------------------------
 # 세션 상태 초기화 (탭 전환용)
 # -----------------------------------------------------------------------------
-if 'show_ranking' not in st.session_state:
-    st.session_state.show_ranking = False
+if 'view' not in st.session_state:
+    st.session_state.view = "main"   # main / forecast / ranking
 
 # -----------------------------------------------------------------------------
 # 2. 데이터 로드 및 전처리
@@ -142,32 +142,70 @@ with st.sidebar.expander("⚙️ 관리자 제어판 (본부별 실적입력)", 
             except Exception as e:
                 st.error(f"구글 시트 연동 중 에러 발생: {e}")
 
-# 💡 [수정] 사이드바 제목 1: '실적달성 시뮬레이터' (19px, 한 줄 꽉 차게)
-st.sidebar.markdown("---")
-st.sidebar.markdown("<div style='font-size: 19px; font-weight: bold; letter-spacing: -1px; margin-bottom: 10px;'>📈 실적달성 시뮬레이터</div>", unsafe_allow_html=True)
+for _df in (df_actual, df_2025):
+    if not _df.empty and '월' in _df.columns:
+        _df['월_num'] = pd.to_numeric(_df['월'].astype(str).str.replace('월', '').str.strip(), errors='coerce').fillna(0).astype(int)
 
-month_list_sim = [f"{i}월" for i in range(1, 13)]
-selected_month = st.sidebar.selectbox("현재 집계 완료(월)", month_list_sim, index=CURRENT_MONTH_INDEX)
+# -----------------------------------------------------------------------------
+# 본부별 실적 입력 여부 판정 (입력 현황 배너와 '최신 입력월' 계산에 함께 사용)
+#  - 필수: 전력·용수, 그리고 작년 같은 달에 가스를 쓴 본부는 가스까지
+#  - 등유는 구매 시점이 불규칙해 참고로만 본다
+# -----------------------------------------------------------------------------
+INPUT_ITEMS = [("전력", "전력사용량"), ("용수", "용수사용량"), ("가스", "도시가스사용량"), ("등유", "실내등유사용량")]
 
-sel_month_num = int(selected_month.replace('월', ''))
+def input_status(hq, month_num):
+    has_cols = bool(group_col) and '월_num' in df_actual.columns
+    sub = df_actual[(df_actual[group_col].astype(str) == hq) & (df_actual['월_num'] == month_num)] if has_cols else pd.DataFrame()
+    got = {name: (float(sub[col].sum()) > 0 if col in sub.columns else False) for name, col in INPUT_ITEMS}
+    prev = df_2025[(df_2025[group_col].astype(str) == hq) & (df_2025['월_num'] == month_num)] \
+        if (group_col and not df_2025.empty and group_col in df_2025.columns and '월_num' in df_2025.columns) else pd.DataFrame()
+    gas_required = '도시가스사용량' in prev.columns and float(prev['도시가스사용량'].sum()) > 0
+    required = ["전력", "용수"] + (["가스"] if gas_required else [])
+    if all(got[k] for k in required):
+        state = "완료"
+    elif any(got.values()):
+        state = "일부"
+    else:
+        state = "미입력"
+    times = [str(t) for t in sub.get('입력시간', pd.Series(dtype=str)).tolist() if str(t).strip() not in ("", "0", "nan")]
+    return {"hq": hq, "got": got, "required": required, "state": state, "last": max(times) if times else ""}
 
-# 💡 [수정] 사이드바 제목 2: '온실가스 절감률 순위 표시' (19px, 크기 동일화, 한 줄 꽉 차게)
-st.sidebar.markdown("---")
-st.sidebar.markdown("<div style='font-size: 19px; font-weight: bold; letter-spacing: -1px; margin-bottom: 10px;'>🏆 온실가스 절감률 순위 표시</div>", unsafe_allow_html=True)
+# 본부별 최신 입력월 = 필수 항목이 모두 입력된 가장 최근 달 (누계·예측의 기준)
+# (한전 자동 수집으로 전력만 먼저 채워진 진행 중인 달은 제외됨)
+hq_last = {}
+for _hq in hq_list:
+    done_months = [m for m in range(1, 13) if input_status(_hq, m)["state"] == "완료"]
+    hq_last[_hq] = max(done_months) if done_months else 0
 
-btn_label = "🔙 메인 대시보드로 돌아가기" if st.session_state.show_ranking else "🏆 온실가스 절감률 순위 확인"
-if st.sidebar.button(btn_label, use_container_width=True, key="rank_toggle_button"):
-    st.session_state.show_ranking = not st.session_state.show_ranking
-    st.rerun()
-
-if '월' in df_actual.columns:
-    df_actual['월_num'] = pd.to_numeric(df_actual['월'].astype(str).str.replace('월', '').str.strip(), errors='coerce').fillna(0).astype(int)
-    df_filtered = df_actual[(df_actual['월_num'] > 0) & (df_actual['월_num'] <= sel_month_num)]
+if '월_num' in df_actual.columns and group_col:
+    _limit = df_actual[group_col].astype(str).map(hq_last).fillna(0)
+    df_filtered = df_actual[(df_actual['월_num'] > 0) & (df_actual['월_num'] <= _limit)]
 else:
     df_filtered = df_actual
 
-if not df_2025.empty and '월' in df_2025.columns:
-    df_2025['월_num'] = pd.to_numeric(df_2025['월'].astype(str).str.replace('월', '').str.strip(), errors='coerce').fillna(0).astype(int)
+# 사이드바: 화면 전환 버튼 (연간 달성 예측 / 온실가스 절감률 순위)
+if 'view' not in st.session_state:
+    st.session_state.view = "main"
+
+def _view_button(label, view, key):
+    active = st.session_state.view == view
+    if st.sidebar.button("🔙 메인 대시보드로 돌아가기" if active else label, use_container_width=True, key=key,
+                         type="primary" if active else "secondary"):
+        st.session_state.view = "main" if active else view
+        st.rerun()
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("<div style='font-size: 19px; font-weight: bold; letter-spacing: -1px; margin-bottom: 10px;'>📈 연간 달성 예측</div>", unsafe_allow_html=True)
+_view_button("📈 전사 연간 달성 예측 확인", "forecast", "forecast_toggle_button")
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("<div style='font-size: 19px; font-weight: bold; letter-spacing: -1px; margin-bottom: 10px;'>🏆 온실가스 절감률 순위 표시</div>", unsafe_allow_html=True)
+_view_button("🏆 온실가스 절감률 순위 확인", "ranking", "rank_toggle_button")
+
+st.sidebar.markdown("---")
+with st.sidebar.expander("📅 본부별 집계 기준월"):
+    st.markdown("누계·예측은 본부마다 **필수 항목 입력이 끝난 가장 최근 달**까지를 기준으로 계산합니다.")
+    st.markdown("\n".join(f"- {format_hq_name(h)}: **{hq_last[h]}월**" if hq_last[h] else f"- {format_hq_name(h)}: 입력 완료 월 없음" for h in hq_list))
 
 # -----------------------------------------------------------------------------
 # 4. 연산 (총괄 및 본부별 실적/랭킹 계산)
@@ -192,7 +230,8 @@ ghg_reduction_display = ghg_reduction if ghg_reduction > 0 else 0
 pine_trees = int(ghg_reduction_display * 6.6)
 
 if group_col:
-    df_grouped = df_filtered.groupby(group_col).sum(numeric_only=True).reset_index()
+    df_grouped = df_filtered.groupby(group_col).sum(numeric_only=True)
+    df_grouped = df_grouped.reindex(df_grouped.index.union(pd.Index(hq_list)), fill_value=0).rename_axis(group_col).reset_index()
     df_target_grouped = df_target.groupby(group_col).sum(numeric_only=True).reset_index() if group_col in df_target.columns else pd.DataFrame()
     raw_valid_hqs = [hq for hq in df_grouped[group_col].astype(str).tolist() if hq.strip() != '0' and hq.strip() != '']
     valid_hqs = sorted(raw_valid_hqs, key=lambda x: target_order.index(x) if x in target_order else 999)
@@ -292,12 +331,118 @@ else:
 title_html = f"<div style='display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 20px;'><div style='flex: 1; display: flex; justify-content: flex-start; align-items: center; padding-left: 10px;'>{left_html}</div><div style='flex: 2; display: flex; justify-content: center; align-items: center;'><span style='font-size: 48px; font-weight: 900; color: {KPETRO_GRAY}; letter-spacing: -1.5px;'>K-REMS 통합 모니터링</span></div><div style='flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 10px;'>{yubanjang_html}</div></div>"
 st.markdown(title_html, unsafe_allow_html=True)
 
+def _upto(hq):
+    """게이지 제목 옆에 붙는 집계 기준월 표시"""
+    n = hq_last.get(hq, 0)
+    return f" (~{n}월)" if n else " (입력 없음)"
+
+# -------------------------------------------------------------------------
+# 연간 달성 예측 (2026-10 개선: 2025·2026 실적 백테스트로 선정)
+#  - 전력·도시가스: 올해 누계 + 작년 남은 달 x 증감률
+#      증감률 = (누계 증감률 + 최근 3개월 증감률) / 2, 0.7~1.3배로 제한
+#  - 실내등유: 구매 시점이 불규칙 -> 작년 남은 달 사용량 그대로
+#  - 온실가스: 전력·가스·등유 예측값을 각각 배출계수로 환산해 합산
+#  - 용수: (작년 기반 증감률 예측 + 올해 월평균 x 남은 달) / 2
+#          고지서가 늦게 오는 달(올해 0, 작년 값 있음)은 미입력으로 보고 예측 대상에 포함
+# -------------------------------------------------------------------------
+EF = {'전력사용량': 0.0004594106, '도시가스사용량': 0.002187587, '실내등유사용량': 0.0024652936}
+
+def _monthly(df, hq, col):
+    if df is None or df.empty or col not in df.columns or group_col not in df.columns or '월_num' not in df.columns:
+        return {}
+    d = df[df[group_col].astype(str) == hq]
+    return {int(k): float(v) for k, v in d.groupby('월_num')[col].sum().items()}
+
+def _ratio(cur, prev, months):
+    def r(ms):
+        p = sum(prev.get(m, 0) for m in ms)
+        return (sum(cur.get(m, 0) for m in ms) / p) if p > 0 else None
+    a, b = r(months), r(months[-3:])
+    if a is None and b is None:
+        return 1.0
+    v = a if b is None else b if a is None else 0.5 * a + 0.5 * b
+    return min(max(v, 0.7), 1.3)
+
+def _forecast_item(hq, col):
+    cur, prev = _monthly(df_actual, hq, col), _monthly(df_2025, hq, col)
+    n = hq_last.get(hq, 0)   # 본부별 최신 입력월
+    upto = list(range(1, n + 1))
+    if col == '용수사용량':
+        done = [m for m in upto if cur.get(m, 0) > 0 or prev.get(m, 0) == 0]
+    else:
+        done = upto
+    rest = [m for m in range(1, 13) if m not in done]
+    ytd = sum(cur.get(m, 0) for m in done)
+    if not done:
+        return sum(prev.values())   # 입력 완료된 달이 없으면 작년 실적 수준으로 가정
+    has_prev = sum(prev.values()) > 0
+    if col == '실내등유사용량':
+        return ytd + sum(prev.get(m, 0) for m in rest)
+    by_avg = ytd + ytd / len(done) * len(rest)
+    if not has_prev:
+        return by_avg
+    by_ratio = ytd + sum(prev.get(m, 0) for m in rest) * _ratio(cur, prev, done)
+    if col == '용수사용량':
+        return 0.5 * by_ratio + 0.5 * by_avg
+    return by_ratio
+
+def forecast_hq(hq):
+    e = _forecast_item(hq, '전력사용량')
+    g = _forecast_item(hq, '도시가스사용량')
+    k = _forecast_item(hq, '실내등유사용량')
+    w = _forecast_item(hq, '용수사용량')
+    ghg = e * EF['전력사용량'] + g * EF['도시가스사용량'] + k * EF['실내등유사용량']
+    return e, ghg, w
+
+def render_forecast_grid(metric_type, tab_prefix):
+    if not valid_hqs:
+        st.info("표시할 본부별 데이터가 없습니다.")
+        return
+
+    for i in range(0, len(valid_hqs), 3):
+        cols = st.columns(3)
+        for j in range(3):
+            idx = i + j
+            if idx < len(valid_hqs):
+                hq_name = valid_hqs[idx]
+                disp_name = format_hq_name(hq_name)
+                row = df_grouped[df_grouped[group_col].astype(str) == hq_name].iloc[0]
+
+                curr_elec = float(row.get('전력사용량', 0))
+                curr_gas = float(row.get('도시가스사용량', 0))
+                curr_kero = float(row.get('실내등유사용량', 0))
+                curr_water = float(row.get('용수사용량', 0))
+                curr_ghg = (curr_elec * 0.0004594106) + (curr_gas * 0.002187587) + (curr_kero * 0.0024652936)
+
+                pred_elec, pred_ghg, pred_water = forecast_hq(hq_name)
+
+                if not df_target_grouped.empty and hq_name in df_target_grouped[group_col].values:
+                    t_row = df_target_grouped[df_target_grouped[group_col] == hq_name].iloc[0]
+                    t_elec = float(t_row.get('전력목표_연간', 0))
+                    t_ghg = float(t_row.get('온실가스목표_연간', 0))
+                    t_water = float(t_row.get('용수목표_연간', 0))
+
+                    if t_elec == 0: t_elec = curr_elec * 1.2
+                    if t_ghg == 0: t_ghg = curr_ghg * 1.2
+                    if t_water == 0: t_water = curr_water * 1.2
+                else:
+                    t_elec, t_ghg, t_water = curr_elec * 1.2, curr_ghg * 1.2, curr_water * 1.2
+
+                with cols[j]:
+                    if metric_type == "GHG":
+                        st.plotly_chart(make_gauge(pred_ghg, t_ghg, f"{disp_name}{_upto(hq_name)}", "tCO2eq", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_ghg_{hq_name}")
+                    elif metric_type == "ELEC":
+                        st.plotly_chart(make_gauge(pred_elec, t_elec, f"{disp_name}{_upto(hq_name)}", "kWh", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_elec_{hq_name}")
+                    elif metric_type == "WATER":
+                        st.plotly_chart(make_gauge(pred_water, t_water, f"{disp_name}{_upto(hq_name)}", "ton", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
+
+
 # =============================================================================
 # 7. 화면 분기 (순위표 탭 vs 메인 대시보드 탭)
 # =============================================================================
-if st.session_state.show_ranking:
+if st.session_state.view == "ranking":
     # ------------------ [순위표 탭 화면] ------------------
-    st.markdown(f"### 🥇 2026년 {selected_month} 온실가스 절감 우수 본부 TOP 3")
+    st.markdown(f"### 🥇 2026년 온실가스 절감 우수 본부 TOP 3 (누계 · 본부별 최신 입력월 기준)")
     if len(rank_data) >= 3:
         medals = [("🥇 1위", "#FFD700", rank_data[0]), ("🥈 2위", "#C0C0C0", rank_data[1]), ("🥉 3위", "#CD7F32", rank_data[2])]
         r_cols = st.columns(3)
@@ -320,9 +465,46 @@ if st.session_state.show_ranking:
         df_rank.index = df_rank.index + 1 
         st.dataframe(df_rank, use_container_width=True)
 
+elif st.session_state.view == "forecast":
+    # ------------------ [연간 달성 예측 화면] ------------------
+    st.subheader("📈 K-PETRO 전사 연간 달성 예측 (2026년 연말 예상치)")
+    preds = {hq: forecast_hq(hq) for hq in valid_hqs}
+    pred_elec_all = sum(p[0] for p in preds.values())
+    pred_ghg_all = sum(p[1] for p in preds.values())
+    pred_water_all = sum(p[2] for p in preds.values())
+
+    fc1, fc2, fc3 = st.columns(3)
+    with fc1: st.plotly_chart(make_gauge(pred_ghg_all, target_ghg, "전사 온실가스 배출량", "tCO2eq", is_forecast=True), use_container_width=True, key="fc_ghg")
+    with fc2: st.plotly_chart(make_gauge(pred_elec_all, target_elec, "전사 전력사용량", "kWh", is_forecast=True), use_container_width=True, key="fc_elec")
+    with fc3: st.plotly_chart(make_gauge(pred_water_all, target_water, "전사 용수사용량", "ton", is_forecast=True), use_container_width=True, key="fc_water")
+
+    over = [format_hq_name(hq) for hq, p in preds.items()
+            if not df_target_grouped.empty and hq in df_target_grouped[group_col].values
+            and float(df_target_grouped[df_target_grouped[group_col] == hq].iloc[0].get('온실가스목표_연간', 0)) > 0
+            and p[1] > float(df_target_grouped[df_target_grouped[group_col] == hq].iloc[0].get('온실가스목표_연간', 0))]
+    gap = target_ghg - pred_ghg_all
+    if gap >= 0:
+        msg, bg, fg = f"✅ 현재 추세라면 연말 온실가스 배출량은 목표보다 <b>{gap:,.1f} tCO2eq 적은</b> {pred_ghg_all:,.1f} tCO2eq로 <b>목표 달성이 예상</b>됩니다.", "#E8F5E9", "#2E7D32"
+    else:
+        msg, bg, fg = f"⚠️ 현재 추세라면 연말 온실가스 배출량이 목표를 <b>{-gap:,.1f} tCO2eq 초과</b>할 것으로 예상됩니다.", "#FFF4E5", "#B45309"
+    over_txt = ("<br><span style='font-size:15px'>목표 초과 예상 본부: " + ", ".join(over) + "</span>") if over else ""
+    st.markdown(f"<div style='background:{bg}; padding:15px; border-radius:8px; text-align:center; color:{fg}; font-size:18px; margin-bottom:10px;'>{msg}{over_txt}</div>", unsafe_allow_html=True)
+    st.caption("※ 전사 목표 = 전 본부 연간 목표 합계, 전사 예측 = 전 본부 연말 예측치 합계. 예측은 본부마다 최신 입력월까지의 실적에 "
+               "작년 남은 달 사용량 × 올해 증감 추세를 더해 계산합니다.")
+
+    st.markdown("---")
+    st.subheader("🏢 본부별 · 자원별 연간 달성 예측")
+    f_tab1, f_tab2, f_tab3 = st.tabs(["☁️ 온실가스 예측치", "⚡ 전력사용량 예측치", "💧 용수사용량 예측치"])
+    with f_tab1:
+        render_forecast_grid("GHG", "forecast_ghg")
+    with f_tab2:
+        render_forecast_grid("ELEC", "forecast_elec")
+    with f_tab3:
+        render_forecast_grid("WATER", "forecast_water")
+
 else:
     # ------------------ [메인 대시보드 화면] ------------------
-    st.subheader(f"💡 K-PETRO 통합 실적 (누계 - {selected_month} 기준)")
+    st.subheader(f"💡 K-PETRO 통합 실적 (2026년 누계 · 본부별 최신 입력월 기준)")
 
     g_col1, g_col2, g_col3 = st.columns(3)
     with g_col1: st.plotly_chart(make_gauge(total_ghg, target_ghg, "총괄 온실가스 배출량", "tCO2eq"), use_container_width=True, key="top_ghg")
@@ -331,31 +513,13 @@ else:
 
     st.markdown(f"""
     <div style='background-color: #E8F5E9; padding: 15px; border-radius: 8px; text-align: center; color: #2E7D32; font-size: 18px; font-weight: bold; margin-bottom: 20px;'>
-        🌱 2026년 {selected_month} 기준 목표치 대비 온실가스 감축량 : {ghg_reduction_display:,.1f} tCO2eq (소나무 {pine_trees:,.0f}그루 식재효과)
+        🌱 2026년 누계 기준 목표치 대비 온실가스 감축량 : {ghg_reduction_display:,.1f} tCO2eq (소나무 {pine_trees:,.0f}그루 식재효과)
     </div>
     """, unsafe_allow_html=True)
 
     # ------------------ 본부별 실적 입력 현황 배너 ------------------
     def render_input_status(month_num):
-        items = [("전력", "전력사용량"), ("용수", "용수사용량"), ("가스", "도시가스사용량"), ("등유", "실내등유사용량")]
-        rows = []
-        for hq in hq_list:
-            sub = df_actual[(df_actual[group_col].astype(str) == hq) & (df_actual['월_num'] == month_num)] if group_col else pd.DataFrame()
-            got = {name: (float(sub[col].sum()) > 0 if col in sub.columns else False) for name, col in items}
-            # 필수 항목: 전력·용수는 항상, 가스는 작년 같은 달에 사용한 본부만 (계절·본부별 차이 자동 반영)
-            # 등유는 구매 시점이 불규칙해 참고로만 표시
-            prev = df_2025[(df_2025[group_col].astype(str) == hq) & (df_2025['월_num'] == month_num)] \
-                if (group_col and not df_2025.empty and group_col in df_2025.columns and '월_num' in df_2025.columns) else pd.DataFrame()
-            gas_required = '도시가스사용량' in prev.columns and float(prev['도시가스사용량'].sum()) > 0
-            required = ["전력", "용수"] + (["가스"] if gas_required else [])
-            if all(got[k] for k in required):
-                state = "완료"
-            elif any(got.values()):
-                state = "일부"
-            else:
-                state = "미입력"
-            times = [str(t) for t in sub.get('입력시간', pd.Series(dtype=str)).tolist() if str(t).strip() not in ("", "0", "nan")]
-            rows.append({"hq": hq, "got": got, "required": required, "state": state, "last": max(times) if times else ""})
+        rows = [input_status(hq, month_num) for hq in hq_list]
 
         n_done = sum(r["state"] == "완료" for r in rows)
         n_part = sum(r["state"] == "일부" for r in rows)
@@ -394,11 +558,11 @@ else:
             st.caption("※ 입력 완료 기준: 전력·용수 + 작년 같은 달에 가스를 쓴 본부는 가스까지. 등유는 구매 시점이 불규칙해 참고용입니다. "
                        "빨간 ○ = 입력이 필요한 항목, 회색 ○ = 참고 항목. 한전 자동 수집으로 채워진 전력도 입력으로 봅니다.")
 
-    render_input_status(sel_month_num)
+    render_input_status(CURRENT_MONTH_INDEX + 1)
 
     st.markdown("---")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["☁️ 온실가스 배출량", "⚡ 전력사용량", "💧 용수사용량", "📈 연간 달성 예측치", "🔍 본부별 상세분석"])
+    tab1, tab2, tab3, tab5 = st.tabs(["☁️ 온실가스 배출량", "⚡ 전력사용량", "💧 용수사용량", "🔍 본부별 상세분석"])
 
     def render_hq_grid(metric_type, tab_prefix):
         if not valid_hqs:
@@ -434,134 +598,23 @@ else:
 
                     with cols[j]:
                         if metric_type == "GHG":
-                            st.plotly_chart(make_gauge(r_ghg, t_ghg, f"{disp_name}", "tCO2eq"), use_container_width=True, key=f"{tab_prefix}_ghg_{hq_name}")
+                            st.plotly_chart(make_gauge(r_ghg, t_ghg, f"{disp_name}{_upto(hq_name)}", "tCO2eq"), use_container_width=True, key=f"{tab_prefix}_ghg_{hq_name}")
                         elif metric_type == "ELEC":
-                            st.plotly_chart(make_gauge(r_elec, t_elec, f"{disp_name}", "kWh"), use_container_width=True, key=f"{tab_prefix}_elec_{hq_name}")
+                            st.plotly_chart(make_gauge(r_elec, t_elec, f"{disp_name}{_upto(hq_name)}", "kWh"), use_container_width=True, key=f"{tab_prefix}_elec_{hq_name}")
                         elif metric_type == "WATER":
-                            st.plotly_chart(make_gauge(r_water, t_water, f"{disp_name}", "ton"), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
-
-    # -------------------------------------------------------------------------
-    # 연간 달성 예측 (2026-10 개선: 2025·2026 실적 백테스트로 선정)
-    #  - 전력·도시가스: 올해 누계 + 작년 남은 달 x 증감률
-    #      증감률 = (누계 증감률 + 최근 3개월 증감률) / 2, 0.7~1.3배로 제한
-    #  - 실내등유: 구매 시점이 불규칙 -> 작년 남은 달 사용량 그대로
-    #  - 온실가스: 전력·가스·등유 예측값을 각각 배출계수로 환산해 합산
-    #  - 용수: (작년 기반 증감률 예측 + 올해 월평균 x 남은 달) / 2
-    #          고지서가 늦게 오는 달(올해 0, 작년 값 있음)은 미입력으로 보고 예측 대상에 포함
-    # -------------------------------------------------------------------------
-    EF = {'전력사용량': 0.0004594106, '도시가스사용량': 0.002187587, '실내등유사용량': 0.0024652936}
-
-    def _monthly(df, hq, col):
-        if df is None or df.empty or col not in df.columns or group_col not in df.columns or '월_num' not in df.columns:
-            return {}
-        d = df[df[group_col].astype(str) == hq]
-        return {int(k): float(v) for k, v in d.groupby('월_num')[col].sum().items()}
-
-    def _ratio(cur, prev, months):
-        def r(ms):
-            p = sum(prev.get(m, 0) for m in ms)
-            return (sum(cur.get(m, 0) for m in ms) / p) if p > 0 else None
-        a, b = r(months), r(months[-3:])
-        if a is None and b is None:
-            return 1.0
-        v = a if b is None else b if a is None else 0.5 * a + 0.5 * b
-        return min(max(v, 0.7), 1.3)
-
-    def _forecast_item(hq, col):
-        cur, prev = _monthly(df_actual, hq, col), _monthly(df_2025, hq, col)
-        n = sel_month_num
-        upto = list(range(1, n + 1))
-        if col == '용수사용량':
-            done = [m for m in upto if cur.get(m, 0) > 0 or prev.get(m, 0) == 0]
-        else:
-            done = upto
-        rest = [m for m in range(1, 13) if m not in done]
-        ytd = sum(cur.get(m, 0) for m in done)
-        if not done:
-            return ytd
-        has_prev = sum(prev.values()) > 0
-        if col == '실내등유사용량':
-            return ytd + sum(prev.get(m, 0) for m in rest)
-        by_avg = ytd + ytd / len(done) * len(rest)
-        if not has_prev:
-            return by_avg
-        by_ratio = ytd + sum(prev.get(m, 0) for m in rest) * _ratio(cur, prev, done)
-        if col == '용수사용량':
-            return 0.5 * by_ratio + 0.5 * by_avg
-        return by_ratio
-
-    def forecast_hq(hq):
-        e = _forecast_item(hq, '전력사용량')
-        g = _forecast_item(hq, '도시가스사용량')
-        k = _forecast_item(hq, '실내등유사용량')
-        w = _forecast_item(hq, '용수사용량')
-        ghg = e * EF['전력사용량'] + g * EF['도시가스사용량'] + k * EF['실내등유사용량']
-        return e, ghg, w
-
-    def render_forecast_grid(metric_type, tab_prefix):
-        if not valid_hqs:
-            st.info("표시할 본부별 데이터가 없습니다.")
-            return
-            
-        for i in range(0, len(valid_hqs), 3):
-            cols = st.columns(3)
-            for j in range(3):
-                idx = i + j
-                if idx < len(valid_hqs):
-                    hq_name = valid_hqs[idx]
-                    disp_name = format_hq_name(hq_name)
-                    row = df_grouped[df_grouped[group_col].astype(str) == hq_name].iloc[0]
-                    
-                    curr_elec = float(row.get('전력사용량', 0))
-                    curr_gas = float(row.get('도시가스사용량', 0))
-                    curr_kero = float(row.get('실내등유사용량', 0))
-                    curr_water = float(row.get('용수사용량', 0))
-                    curr_ghg = (curr_elec * 0.0004594106) + (curr_gas * 0.002187587) + (curr_kero * 0.0024652936)
-                    
-                    pred_elec, pred_ghg, pred_water = forecast_hq(hq_name)
-                    
-                    if not df_target_grouped.empty and hq_name in df_target_grouped[group_col].values:
-                        t_row = df_target_grouped[df_target_grouped[group_col] == hq_name].iloc[0]
-                        t_elec = float(t_row.get('전력목표_연간', 0))
-                        t_ghg = float(t_row.get('온실가스목표_연간', 0))
-                        t_water = float(t_row.get('용수목표_연간', 0))
-                        
-                        if t_elec == 0: t_elec = curr_elec * 1.2
-                        if t_ghg == 0: t_ghg = curr_ghg * 1.2
-                        if t_water == 0: t_water = curr_water * 1.2
-                    else:
-                        t_elec, t_ghg, t_water = curr_elec * 1.2, curr_ghg * 1.2, curr_water * 1.2
-
-                    with cols[j]:
-                        if metric_type == "GHG":
-                            st.plotly_chart(make_gauge(pred_ghg, t_ghg, f"{disp_name}", "tCO2eq", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_ghg_{hq_name}")
-                        elif metric_type == "ELEC":
-                            st.plotly_chart(make_gauge(pred_elec, t_elec, f"{disp_name}", "kWh", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_elec_{hq_name}")
-                        elif metric_type == "WATER":
-                            st.plotly_chart(make_gauge(pred_water, t_water, f"{disp_name}", "ton", is_forecast=True), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
+                            st.plotly_chart(make_gauge(r_water, t_water, f"{disp_name}{_upto(hq_name)}", "ton"), use_container_width=True, key=f"{tab_prefix}_water_{hq_name}")
 
     with tab1:
-        st.subheader(f"☁ 본부별 온실가스 배출량 상세 실적 (누계 - {selected_month})")
+        st.subheader(f"☁ 본부별 온실가스 배출량 상세 실적 (누계 · 본부별 최신 입력월 기준)")
         render_hq_grid("GHG", "tab1")
 
     with tab2:
-        st.subheader(f"⚡ 본부별 전력사용량 상세 실적 (누계 - {selected_month})")
+        st.subheader(f"⚡ 본부별 전력사용량 상세 실적 (누계 · 본부별 최신 입력월 기준)")
         render_hq_grid("ELEC", "tab2")
 
     with tab3:
-        st.subheader(f"💧 본부별 용수사용량 상세 실적 (누계 - {selected_month})")
+        st.subheader(f"💧 본부별 용수사용량 상세 실적 (누계 · 본부별 최신 입력월 기준)")
         render_hq_grid("WATER", "tab3")
-
-    with tab4:
-        st.subheader("📈 항목별 종합 연간 달성 예측 시뮬레이션")
-        f_tab1, f_tab2, f_tab3 = st.tabs(["☁️ 온실가스 예측치", "⚡ 전력사용량 예측치", "💧 용수사용량 예측치"])
-        
-        with f_tab1:
-            render_forecast_grid("GHG", "forecast_ghg")
-        with f_tab2:
-            render_forecast_grid("ELEC", "forecast_elec")
-        with f_tab3:
-            render_forecast_grid("WATER", "forecast_water")
 
     with tab5:
         try:
@@ -571,7 +624,7 @@ else:
             df_daily, df_hourly = hq_detail.prepare_daily(None), hq_detail.prepare_hourly(None)
         hq_detail.render({
             "df_actual": df_actual, "df_2025": df_2025, "df_target": df_target,
-            "group_col": group_col, "hqs": valid_hqs, "sel_month_num": sel_month_num,
+            "group_col": group_col, "hqs": valid_hqs, "hq_last": hq_last,
             "daily": df_daily, "hourly": df_hourly,
             "make_gauge": make_gauge, "format_hq_name": format_hq_name,
         })
