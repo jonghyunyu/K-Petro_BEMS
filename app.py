@@ -7,6 +7,7 @@ import plotly.express as px
 from datetime import datetime
 import os
 import base64
+import hq_detail
 
 # -----------------------------------------------------------------------------
 # 1. 페이지 기본 설정 및 구글 API 클라이언트 연결
@@ -67,6 +68,18 @@ def load_data():
                 df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                 
     return df_actual, df_2025, df_target
+
+# 한전 자동 수집기(kepco_sync.py)가 쌓는 일별·시간대별 전력 (본부별 상세분석 탭용)
+@st.cache_data(ttl=600)
+def load_power_data():
+    doc = get_client().open_by_key(SHEET_ID)
+    out = []
+    for title in ["일간전력", "시간별전력"]:
+        try:
+            out.append(pd.DataFrame(doc.worksheet(title).get_all_records()))
+        except Exception:
+            out.append(pd.DataFrame())  # 탭이 아직 없으면 빈 표
+    return hq_detail.prepare_daily(out[0]), hq_detail.prepare_hourly(out[1])
 
 try:
     df_actual, df_2025, df_target = load_data()
@@ -320,7 +333,7 @@ else:
 
     st.markdown("---")
 
-    tab1, tab2, tab3, tab4 = st.tabs(["☁️ 온실가스 배출량", "⚡ 전력사용량", "💧 용수사용량", "📈 연간 달성 예측치"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["☁️ 온실가스 배출량", "⚡ 전력사용량", "💧 용수사용량", "📈 연간 달성 예측치", "🔍 본부별 상세분석"])
 
     def render_hq_grid(metric_type, tab_prefix):
         if not valid_hqs:
@@ -484,6 +497,19 @@ else:
             render_forecast_grid("ELEC", "forecast_elec")
         with f_tab3:
             render_forecast_grid("WATER", "forecast_water")
+
+    with tab5:
+        try:
+            df_daily, df_hourly = load_power_data()
+        except Exception as e:
+            st.warning(f"한전 일별 데이터를 불러오지 못했습니다: {e}")
+            df_daily, df_hourly = hq_detail.prepare_daily(None), hq_detail.prepare_hourly(None)
+        hq_detail.render({
+            "df_actual": df_actual, "df_2025": df_2025, "df_target": df_target,
+            "group_col": group_col, "hqs": valid_hqs, "sel_month_num": sel_month_num,
+            "daily": df_daily, "hourly": df_hourly,
+            "make_gauge": make_gauge, "format_hq_name": format_hq_name,
+        })
 
 st.markdown(f"""
 <hr style='border: 1px solid #E0E0E0; margin-top: 50px;'>
