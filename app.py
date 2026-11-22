@@ -342,14 +342,20 @@ else:
         for hq in hq_list:
             sub = df_actual[(df_actual[group_col].astype(str) == hq) & (df_actual['월_num'] == month_num)] if group_col else pd.DataFrame()
             got = {name: (float(sub[col].sum()) > 0 if col in sub.columns else False) for name, col in items}
-            if got["전력"] and got["용수"]:
+            # 필수 항목: 전력·용수는 항상, 가스는 작년 같은 달에 사용한 본부만 (계절·본부별 차이 자동 반영)
+            # 등유는 구매 시점이 불규칙해 참고로만 표시
+            prev = df_2025[(df_2025[group_col].astype(str) == hq) & (df_2025['월_num'] == month_num)] \
+                if (group_col and not df_2025.empty and group_col in df_2025.columns and '월_num' in df_2025.columns) else pd.DataFrame()
+            gas_required = '도시가스사용량' in prev.columns and float(prev['도시가스사용량'].sum()) > 0
+            required = ["전력", "용수"] + (["가스"] if gas_required else [])
+            if all(got[k] for k in required):
                 state = "완료"
             elif any(got.values()):
                 state = "일부"
             else:
                 state = "미입력"
             times = [str(t) for t in sub.get('입력시간', pd.Series(dtype=str)).tolist() if str(t).strip() not in ("", "0", "nan")]
-            rows.append({"hq": hq, "got": got, "state": state, "last": max(times) if times else ""})
+            rows.append({"hq": hq, "got": got, "required": required, "state": state, "last": max(times) if times else ""})
 
         n_done = sum(r["state"] == "완료" for r in rows)
         n_part = sum(r["state"] == "일부" for r in rows)
@@ -372,15 +378,21 @@ else:
             cards = ""
             for r in rows:
                 b, c, label = style[r["state"]]
-                marks = " ".join(f"<span style='color:{'#2E7D32' if ok else '#BBBBBB'}'>{'●' if ok else '○'} {name}</span>" for name, ok in r["got"].items())
+                def _mark(name, ok, req):
+                    if ok:
+                        return f"<span style='color:#2E7D32'>● {name}</span>"
+                    if req:
+                        return f"<span style='color:#D32F2F; font-weight:bold'>○ {name}</span>"
+                    return f"<span style='color:#BBBBBB'>○ {name}</span>"
+                marks = " ".join(_mark(name, ok, name in r["required"]) for name, ok in r["got"].items())
                 last = f"<div style='font-size:12px; color:#888; margin-top:4px'>최근 입력 {r['last']}</div>" if r["last"] else ""
                 cards += (f"<div style='background:{b}; border:1px solid {c}40; border-radius:8px; padding:10px 12px;'>"
                           f"<div style='font-weight:bold; color:{KPETRO_GRAY}; font-size:15px'>{format_hq_name(r['hq'])}</div>"
                           f"<div style='color:{c}; font-weight:bold; font-size:14px; margin:2px 0 4px'>{label}</div>"
                           f"<div style='font-size:13px'>{marks}</div>{last}</div>")
             st.markdown(f"<div style='display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px;'>{cards}</div>", unsafe_allow_html=True)
-            st.caption("※ 입력 완료 = 전력·용수가 모두 입력된 경우. 가스·등유는 사용하지 않는 본부가 있어 참고용으로만 표시합니다. "
-                       "한전 자동 수집으로 채워진 전력도 입력으로 봅니다. 기준 월은 왼쪽 '현재 집계 완료(월)'을 따릅니다.")
+            st.caption("※ 입력 완료 기준: 전력·용수 + 작년 같은 달에 가스를 쓴 본부는 가스까지. 등유는 구매 시점이 불규칙해 참고용입니다. "
+                       "빨간 ○ = 입력이 필요한 항목, 회색 ○ = 참고 항목. 한전 자동 수집으로 채워진 전력도 입력으로 봅니다.")
 
     render_input_status(sel_month_num)
 

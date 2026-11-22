@@ -4,7 +4,7 @@ K-REMS '본부별 상세분석' 탭
 본부를 고르면
   ① 온실가스·전력·용수 누계 실적(목표 대비 게이지 + 전년 동기비·전월비·전사 비중)
   ② 일별 전력 그래프 (월별 / 기간별 조회, 전월·직전 기간 비교선, 급증일 표시)
-  ③ 시간대별 사용 패턴 (평일·주말 24시간, 야간 기저부하)
+  ③ 시간대별 사용 패턴 (평일·주말 24시간, 야간 대기전력 비율)
   ④ 자동 분석 코멘트 (전년 대비 · 전월 대비 · 전사 대비 · 일별 패턴)
   ⑤ 'OO본부 에너지·자원 사용현황' PDF 출력
 을 보여준다. 데이터는 app.py 가 읽은 월간 실적과 한전 자동 수집기(kepco_sync.py)가
@@ -218,7 +218,7 @@ def daily_stats(f):
 
 
 def hourly_profile(hourly, hq, start, end):
-    """평일·주말 시간대별 평균 사용량(kWh)과 야간 기저부하 비율"""
+    """평일·주말 시간대별 평균 사용량(kWh)과 야간 대기전력 비율(밤 ÷ 낮)"""
     hours = [f"{h}시" for h in range(24)]
     d = hourly[(hourly["본부명"] == hq) & (hourly["날짜"] >= start) & (hourly["날짜"] <= end)]
     d = d.dropna(subset=hours, how="all")
@@ -308,13 +308,13 @@ def build_comments(hq_name, m, total, ranking, hq, n_month, stats, prof, period_
             more = f" 외 {len(sp) - 4}일" if len(sp) > 4 else ""
             c.append(("⚠️", f"같은 요일 유형 평균보다 {int((SPIKE_RATIO - 1) * 100)}% 이상 급증한 날: {days}{more}. 행사·설비 고장·데이터 오류 여부를 확인하세요."))
 
-    # 6) 야간 기저부하
+    # 6) 야간 대기전력 비율 (밤 ÷ 낮)
     if prof and prof["base_ratio"] is not None:
         r = prof["base_ratio"]
         if r >= 50:
-            c.append(("⚠️", f"평일 야간(22~06시) 시간당 사용량이 주간(09~18시)의 {r:.0f}%입니다. 퇴근 후 대기전력·상시 가동 설비 점검으로 절감 여지가 있습니다."))
+            c.append(("⚠️", f"사람이 없는 밤(22~06시)에도 낮(09~18시) 전력의 {r:.0f}%를 쓰고 있습니다. 퇴근 후 꺼지지 않는 조명·냉난방·대기전력을 점검하면 절감 여지가 있습니다."))
         else:
-            c.append(("✅", f"평일 야간(22~06시) 시간당 사용량은 주간의 {r:.0f}% 수준으로 기저부하가 낮습니다."))
+            c.append(("✅", f"밤(22~06시) 전력 사용은 낮(09~18시)의 {r:.0f}% 수준으로, 퇴근 후 전력 관리가 잘 되고 있습니다."))
 
     if not c:
         c.append(("ℹ️", "분석할 데이터가 아직 충분하지 않습니다."))
@@ -636,8 +636,17 @@ def render(ctx):
         with h1:
             st.plotly_chart(hourly_chart(prof), use_container_width=True, key="hqd_hourly")
         with h2:
-            st.metric("야간 기저부하 비율", f"{prof['base_ratio']:.0f}%" if prof["base_ratio"] is not None else "-",
-                      help="평일 야간(22~06시) 시간당 평균 ÷ 평일 주간(09~18시) 시간당 평균")
+            r = prof["base_ratio"]
+            st.metric("야간 대기전력 비율", f"{r:.0f}%" if r is not None else "-",
+                      help="평일 밤(22~06시) 시간당 평균 사용량 ÷ 평일 낮(09~18시) 시간당 평균 사용량")
+            if r is not None:
+                judge = ("🟢 양호" if r < 30 else "🟡 보통" if r < 50 else "🔴 점검 필요")
+                st.markdown(
+                    f"<div style='font-size:13px; color:#555; background:#F5F5F5; padding:8px 10px; border-radius:6px; margin:-6px 0 12px'>"
+                    f"사람이 없는 <b>밤</b>에도 <b>낮</b> 전력의 <b>{r:.0f}%</b>를 쓰고 있다는 뜻입니다. "
+                    f"낮을수록 퇴근 후 전력 관리가 잘 되는 것입니다.<br>"
+                    f"<b>판정: {judge}</b> <span style='color:#888'>(30% 미만 양호 · 50% 이상 점검)</span></div>",
+                    unsafe_allow_html=True)
             if prof["weekday"] is not None:
                 pk = prof["weekday"].idxmax()
                 st.metric("평일 최대 사용 시간대", pk, f"{prof['weekday'].max():,.0f} kWh/시간", delta_color="off")
