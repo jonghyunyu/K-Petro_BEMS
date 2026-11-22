@@ -170,12 +170,14 @@ def input_status(hq, month_num):
     times = [str(t) for t in sub.get('입력시간', pd.Series(dtype=str)).tolist() if str(t).strip() not in ("", "0", "nan")]
     return {"hq": hq, "got": got, "required": required, "state": state, "last": max(times) if times else ""}
 
-# 본부별 최신 입력월 = 필수 항목이 모두 입력된 가장 최근 달 (누계·예측의 기준)
-# (한전 자동 수집으로 전력만 먼저 채워진 진행 중인 달은 제외됨)
+# 본부별 최신 입력월 = 전력 실적이 들어온 가장 최근 달 (누계·예측의 기준)
+#  - 용수·가스는 고지서가 늦거나 격월로 오는 경우가 많아 기준에서 제외
+#  - 이번 달(진행 중)은 한전 자동 수집으로 전력이 일부만 채워져 있으므로 제외
+_month_cap = CURRENT_MONTH_INDEX if _now_kst.year == REPORT_YEAR else 12
 hq_last = {}
 for _hq in hq_list:
-    done_months = [m for m in range(1, 13) if input_status(_hq, m)["state"] == "완료"]
-    hq_last[_hq] = max(done_months) if done_months else 0
+    elec_months = [m for m in range(1, _month_cap + 1) if input_status(_hq, m)["got"]["전력"]]
+    hq_last[_hq] = max(elec_months) if elec_months else 0
 
 if '월_num' in df_actual.columns and group_col:
     _limit = df_actual[group_col].astype(str).map(hq_last).fillna(0)
@@ -204,7 +206,7 @@ _view_button("🏆 온실가스 절감률 순위 확인", "ranking", "rank_toggl
 
 st.sidebar.markdown("---")
 with st.sidebar.expander("📅 본부별 집계 기준월"):
-    st.markdown("누계·예측은 본부마다 **필수 항목 입력이 끝난 가장 최근 달**까지를 기준으로 계산합니다.")
+    st.markdown("누계·예측은 본부마다 **전력 실적이 입력된 가장 최근 달**까지를 기준으로 계산합니다. (진행 중인 이번 달 제외)")
     st.markdown("\n".join(f"- {format_hq_name(h)}: **{hq_last[h]}월**" if hq_last[h] else f"- {format_hq_name(h)}: 입력 완료 월 없음" for h in hq_list))
 
 # -----------------------------------------------------------------------------
@@ -558,7 +560,9 @@ else:
             st.caption("※ 입력 완료 기준: 전력·용수 + 작년 같은 달에 가스를 쓴 본부는 가스까지. 등유는 구매 시점이 불규칙해 참고용입니다. "
                        "빨간 ○ = 입력이 필요한 항목, 회색 ○ = 참고 항목. 한전 자동 수집으로 채워진 전력도 입력으로 봅니다.")
 
-    render_input_status(CURRENT_MONTH_INDEX + 1)
+    _last_month = CURRENT_MONTH_INDEX if CURRENT_MONTH_INDEX > 0 else 1   # 기본: 지난달 (고지서가 들어와 입력해야 하는 달)
+    _sel = st.selectbox("📋 입력 현황 확인 월", [f"{i}월" for i in range(1, 13)], index=_last_month - 1, key="input_status_month")
+    render_input_status(int(_sel.replace("월", "")))
 
     st.markdown("---")
 
