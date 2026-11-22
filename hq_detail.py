@@ -139,7 +139,8 @@ def hq_metrics(ctx, hq):
         out[key]["target"] = t if t > 0 else out[key]["ytd"] * 1.5
         out[key]["target_given"] = t > 0
         out[key]["yoy"] = _pct(out[key]["ytd"], out[key]["prev_ytd"])
-        out[key]["mom"] = _pct(out[key]["month"], out[key]["prev_month"])
+        # 기준 월 값이 비어 있으면(고지서 미입력) 전월비를 계산하지 않음
+        out[key]["mom"] = _pct(out[key]["month"], out[key]["prev_month"]) if out[key]["month"] > 0 else None
     return out
 
 
@@ -593,7 +594,7 @@ def render(ctx):
                 f"{_delta_html('전년 동기', x['yoy'])} &nbsp;|&nbsp; {_delta_html(f'{n_month}월 전월비', x['mom'])}"
                 f"<br><span style='color:{KPETRO_GRAY}'>전사 대비 비중 <b>{share:.1f}%</b></span></div>",
                 unsafe_allow_html=True)
-    st.caption(f"※ 누계 기준 월 = 이 본부의 필수 항목 입력이 끝난 가장 최근 달({n_month}월). 전년 동기 = 2025년 같은 기간.")
+    st.caption(f"※ 누계 기준 월 = 이 본부의 전력 실적이 입력된 가장 최근 달({n_month}월). 전년 동기 = 2025년 같은 기간. 용수는 고지서가 늦게 오는 달이 비어 있을 수 있습니다.")
 
     st.markdown("---")
 
