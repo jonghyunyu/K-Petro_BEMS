@@ -4,7 +4,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import plotly.graph_objects as go
 import plotly.express as px
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import os
 import base64
 import hq_detail
@@ -106,13 +106,17 @@ if group_col and not df_actual[group_col].dropna().empty:
 else:
     hq_list = target_order
 
+# 오늘(한국시간)이 속한 달을 기본 선택값으로 사용 (기준 연도가 지난 뒤에는 12월)
+_now_kst = datetime.now(timezone(timedelta(hours=9)))
+CURRENT_MONTH_INDEX = _now_kst.month - 1 if _now_kst.year == REPORT_YEAR else (11 if _now_kst.year > REPORT_YEAR else 0)
+
 # -----------------------------------------------------------------------------
 # 3. 사이드바 (실적 직접 입력 제어판 & 시뮬레이터 & 탭 전환 버튼)
 # -----------------------------------------------------------------------------
 with st.sidebar.expander("⚙️ 관리자 제어판 (본부별 실적입력)", expanded=True):
     st.markdown("웹에서 실적을 입력하면 구글 DB에 실시간 연동됩니다.")
     with st.form("data_input_form", clear_on_submit=True):
-        input_month = st.selectbox("입력 대상 월", [f"{i}월" for i in range(1, 13)])
+        input_month = st.selectbox("입력 대상 월", [f"{i}월" for i in range(1, 13)], index=CURRENT_MONTH_INDEX)
         input_hq = st.selectbox("본부(지사) 선택", hq_list)
         
         input_elec = st.number_input("전력사용량 (kWh)", min_value=0.0, step=100.0)
@@ -143,7 +147,7 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("<div style='font-size: 19px; font-weight: bold; letter-spacing: -1px; margin-bottom: 10px;'>📈 실적달성 시뮬레이터</div>", unsafe_allow_html=True)
 
 month_list_sim = [f"{i}월" for i in range(1, 13)]
-selected_month = st.sidebar.selectbox("현재 집계 완료(월)", month_list_sim, index=8)
+selected_month = st.sidebar.selectbox("현재 집계 완료(월)", month_list_sim, index=CURRENT_MONTH_INDEX)
 
 sel_month_num = int(selected_month.replace('월', ''))
 
@@ -330,6 +334,55 @@ else:
         🌱 2026년 {selected_month} 기준 목표치 대비 온실가스 감축량 : {ghg_reduction_display:,.1f} tCO2eq (소나무 {pine_trees:,.0f}그루 식재효과)
     </div>
     """, unsafe_allow_html=True)
+
+    # ------------------ 본부별 실적 입력 현황 배너 ------------------
+    def render_input_status(month_num):
+        items = [("전력", "전력사용량"), ("용수", "용수사용량"), ("가스", "도시가스사용량"), ("등유", "실내등유사용량")]
+        rows = []
+        for hq in hq_list:
+            sub = df_actual[(df_actual[group_col].astype(str) == hq) & (df_actual['월_num'] == month_num)] if group_col else pd.DataFrame()
+            got = {name: (float(sub[col].sum()) > 0 if col in sub.columns else False) for name, col in items}
+            if got["전력"] and got["용수"]:
+                state = "완료"
+            elif any(got.values()):
+                state = "일부"
+            else:
+                state = "미입력"
+            times = [str(t) for t in sub.get('입력시간', pd.Series(dtype=str)).tolist() if str(t).strip() not in ("", "0", "nan")]
+            rows.append({"hq": hq, "got": got, "state": state, "last": max(times) if times else ""})
+
+        n_done = sum(r["state"] == "완료" for r in rows)
+        n_part = sum(r["state"] == "일부" for r in rows)
+        n_none = sum(r["state"] == "미입력" for r in rows)
+        todo = [format_hq_name(r["hq"]) for r in rows if r["state"] != "완료"]
+        all_done = not todo
+        bg, fg, bd = ("#E8F5E9", "#2E7D32", "#8CC63F") if all_done else ("#FFF4E5", "#B45309", "#F5A623")
+        todo_txt = "모든 본부 입력 완료 🎉" if all_done else "미완료: " + ", ".join(todo)
+        st.markdown(f"""
+        <div style='background:{bg}; border-left:6px solid {bd}; padding:12px 18px; border-radius:8px; margin-bottom:8px;'>
+            <span style='font-size:18px; font-weight:bold; color:{fg};'>📋 {month_num}월 실적 입력 현황</span>
+            <span style='font-size:16px; margin-left:14px; color:{KPETRO_GRAY};'>
+                입력 완료 <b style='color:#2E7D32'>{n_done}</b> · 일부 입력 <b style='color:#B45309'>{n_part}</b> · 미입력 <b style='color:#D32F2F'>{n_none}</b>
+                &nbsp;/&nbsp; 전체 {len(rows)}개 본부</span>
+            <div style='font-size:15px; color:{fg}; margin-top:4px;'>{todo_txt}</div>
+        </div>""", unsafe_allow_html=True)
+
+        with st.expander(f"🔎 {month_num}월 본부별 입력 상세 보기"):
+            style = {"완료": ("#E8F5E9", "#2E7D32", "✅ 입력 완료"), "일부": ("#FFF4E5", "#B45309", "🟠 일부 입력"), "미입력": ("#FDECEA", "#D32F2F", "⛔ 미입력")}
+            cards = ""
+            for r in rows:
+                b, c, label = style[r["state"]]
+                marks = " ".join(f"<span style='color:{'#2E7D32' if ok else '#BBBBBB'}'>{'●' if ok else '○'} {name}</span>" for name, ok in r["got"].items())
+                last = f"<div style='font-size:12px; color:#888; margin-top:4px'>최근 입력 {r['last']}</div>" if r["last"] else ""
+                cards += (f"<div style='background:{b}; border:1px solid {c}40; border-radius:8px; padding:10px 12px;'>"
+                          f"<div style='font-weight:bold; color:{KPETRO_GRAY}; font-size:15px'>{format_hq_name(r['hq'])}</div>"
+                          f"<div style='color:{c}; font-weight:bold; font-size:14px; margin:2px 0 4px'>{label}</div>"
+                          f"<div style='font-size:13px'>{marks}</div>{last}</div>")
+            st.markdown(f"<div style='display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px;'>{cards}</div>", unsafe_allow_html=True)
+            st.caption("※ 입력 완료 = 전력·용수가 모두 입력된 경우. 가스·등유는 사용하지 않는 본부가 있어 참고용으로만 표시합니다. "
+                       "한전 자동 수집으로 채워진 전력도 입력으로 봅니다. 기준 월은 왼쪽 '현재 집계 완료(월)'을 따릅니다.")
+
+    render_input_status(sel_month_num)
 
     st.markdown("---")
 
