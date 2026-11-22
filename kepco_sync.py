@@ -6,6 +6,8 @@ app.py 는 건드리지 않습니다. GitHub Actions(kepco_daily.yml)가 매일 
 하는 일
   1) 한전 OPM Open-API(getDayLpData)로 11개 본부 고객번호의 하루 사용량(15분 x 96개)을 받아 합산
   2) 구글시트 '일간전력' 탭에 날짜·본부별로 한 줄씩 기록 (같은 날짜·본부는 덮어씀)
+     - 하루 최대수요(kW, 15분 평균 전력 최댓값)도 함께 기록
+     - '시간별전력' 탭에는 0시~23시 시간대별 사용량(kWh)을 하루 한 줄로 기록
   3) 기관의 고지서 입력 방식과 같은 기간(본부별 검침일 기준)으로 합산해 '월간실적' 탭의
      (연도, 월, 본부명) 행 '전력사용량' 칸에 기록.
      사용 기간이 정보제공 동의일(KEPCO_START) 이후에 시작하는 달만 자동 기록하고,
@@ -29,6 +31,7 @@ app.py 는 건드리지 않습니다. GitHub Actions(kepco_daily.yml)가 매일 
   python kepco_sync.py                  # 최근 3일 다시 수집 (한전 정정분 반영)
   python kepco_sync.py --date 2026-10-30
   python kepco_sync.py --date 2026-10-30 --dry-run   # 시트에 쓰지 않고 결과만 출력
+  python kepco_sync.py --from 2026-10-30             # 10/30부터 어제까지 모두 다시 수집 (지난 기간 채우기)
 """
 
 import argparse
@@ -44,7 +47,9 @@ from google.oauth2.service_account import Credentials
 SHEET_ID = "1Ky6Brrh5pWXuDvAXV36SSQ2MBAjtxr__UbY8fU3viBY"
 MONTHLY_TAB = "월간실적"
 DAILY_TAB = "일간전력"
-DAILY_HEADER = ["날짜", "본부명", "전력사용량", "온실가스(tCO2eq)", "15분값개수", "수집시간"]
+DAILY_HEADER = ["날짜", "본부명", "전력사용량", "온실가스(tCO2eq)", "15분값개수", "수집시간", "최대수요(kW)"]
+HOURLY_TAB = "시간별전력"   # 하루 1줄: 날짜, 본부명, 0시~23시 사용량(kWh), 수집시간
+HOURLY_HEADER = ["날짜", "본부명"] + [f"{h}시" for h in range(24)] + ["수집시간"]
 
 ELEC_FACTOR = 0.0004594106  # app.py 와 같은 전력 배출계수 (tCO2eq/kWh)
 KST = timezone(timedelta(hours=9))
@@ -80,9 +85,12 @@ def _year_num(v) -> int:
 # 한전 OPM
 # -----------------------------------------------------------------------------
 def fetch_day(customer_no: str, day: date):
-    """고객번호 1개의 하루 사용량. (합계 kWh, 받은 15분 값 개수)"""
+    """고객번호 1개의 하루 사용량.
+    반환: (합계 kWh, 받은 15분 값 개수, 15분 값 96개 목록[kWh, 값 없으면 None])"""
     if os.environ.get("KEPCO_MOCK") == "1":
-        return round(random.uniform(1500, 6000), 1), 96
+        base = random.uniform(15, 60)
+        lp = [round(base * (1.8 if 36 <= i < 72 else 0.6) * random.uniform(0.8, 1.2), 2) for i in range(96)]
+        return round(sum(lp), 1), 96, lp
 
     import requests
     resp = requests.get(OPM_URL, params={
@@ -108,13 +116,33 @@ def fetch_day(customer_no: str, day: date):
     if not rows:
         raise RuntimeError("데이터 없음 (아직 미집계이거나 정보제공 동의 전 날짜)")
 
-    total, count = 0.0, 0
-    for r in rows:  # 다계기(계량기 여러 개)면 여러 줄 -> 모두 합산
-        vals = [_num(r.get(k)) for k in LP_KEYS]
-        vals = [v for v in vals if v is not None]
-        total += sum(vals)
-        count = max(count, len(vals))
-    return round(total, 2), count
+    # 다계기(계량기 여러 개)면 여러 줄 -> 같은 15분 구간끼리 합산
+    lp = [None] * 96
+    for r in rows:
+        for i, k in enumerate(LP_KEYS):
+            v = _num(r.get(k))
+            if v is not None:
+                lp[i] = (lp[i] or 0.0) + v
+    count = sum(v is not None for v in lp)
+    total = sum(v for v in lp if v is not None)
+    return round(total, 2), count, lp
+
+
+def summarize_lp(lp_list):
+    """여러 고객번호의 15분 값 목록 -> (시간별 24개 kWh, 최대수요 kW)
+    최대수요 = 15분 사용량(kWh) x 4 의 하루 최댓값 (한전 최대수요와 같은 15분 평균 전력)"""
+    merged = [None] * 96
+    for lp in lp_list:
+        for i, v in enumerate(lp):
+            if v is not None:
+                merged[i] = (merged[i] or 0.0) + v
+    hourly = []
+    for h in range(24):
+        part = [v for v in merged[h * 4:(h + 1) * 4] if v is not None]
+        hourly.append(round(sum(part), 2) if part else "")
+    vals = [v for v in merged if v is not None]
+    peak_kw = round(max(vals) * 4, 1) if vals else ""
+    return hourly, peak_kw
 
 
 # -----------------------------------------------------------------------------
@@ -135,30 +163,56 @@ def get_doc():
     return gspread.authorize(creds).open_by_key(SHEET_ID)
 
 
-def get_or_create_daily_ws(doc):
+def get_or_create_ws(doc, title: str, header: list, rows: int = 5000):
+    """탭이 없으면 만들고, 머리글에 새 칸이 추가됐으면 맞춰 늘림 (기존 데이터는 그대로)"""
     try:
-        return doc.worksheet(DAILY_TAB)
+        ws = doc.worksheet(title)
     except gspread.WorksheetNotFound:
-        ws = doc.add_worksheet(title=DAILY_TAB, rows=5000, cols=len(DAILY_HEADER))
-        ws.append_row(DAILY_HEADER)
+        ws = doc.add_worksheet(title=title, rows=rows, cols=len(header))
+        ws.append_row(header)
         return ws
+    if ws.col_count < len(header):
+        ws.add_cols(len(header) - ws.col_count)
+    current = ws.row_values(1)
+    if len(current) < len(header) and current == header[:len(current)]:
+        # 예전 머리글 뒤에 새 칸 이름만 이어 붙임 (사람이 고친 머리글은 건드리지 않음)
+        start = gspread.utils.rowcol_to_a1(1, len(current) + 1)
+        end = gspread.utils.rowcol_to_a1(1, len(header))
+        ws.update(range_name=f"{start}:{end}", values=[header[len(current):]])
+    return ws
 
 
-def upsert_daily(ws, day: date, values: dict, now_str: str):
+def get_or_create_daily_ws(doc):
+    return get_or_create_ws(doc, DAILY_TAB, DAILY_HEADER)
+
+
+def _upsert(ws, day: date, rows_by_hq: dict, width: int):
+    """(날짜, 본부명) 이 같은 줄은 덮어쓰고, 없으면 아래에 추가"""
     rows = ws.get_all_values()
     index = {(r[0], r[1]): i + 1 for i, r in enumerate(rows) if len(r) >= 2}
+    last_col = gspread.utils.rowcol_to_a1(1, width).rstrip("1")
     updates, appends = [], []
-    for hq, (kwh, n) in values.items():
-        row = [day.isoformat(), hq, kwh, round(kwh * ELEC_FACTOR, 4), n, now_str]
+    for hq, row in rows_by_hq.items():
         r = index.get((day.isoformat(), hq))
         if r:
-            updates.append({"range": f"A{r}:F{r}", "values": [row]})
+            updates.append({"range": f"A{r}:{last_col}{r}", "values": [row]})
         else:
             appends.append(row)
     if updates:
         ws.batch_update(updates, value_input_option="USER_ENTERED")
     if appends:
         ws.append_rows(appends, value_input_option="USER_ENTERED")
+
+
+def upsert_daily(ws, day: date, values: dict, now_str: str):
+    rows = {hq: [day.isoformat(), hq, v["kwh"], round(v["kwh"] * ELEC_FACTOR, 4), v["count"], now_str, v["peak_kw"]]
+            for hq, v in values.items()}
+    _upsert(ws, day, rows, len(DAILY_HEADER))
+
+
+def upsert_hourly(ws, day: date, values: dict, now_str: str):
+    rows = {hq: [day.isoformat(), hq] + v["hourly"] + [now_str] for hq, v in values.items()}
+    _upsert(ws, day, rows, len(HOURLY_HEADER))
 
 
 def _meter(meter_days: dict, hq: str):
@@ -258,9 +312,10 @@ def collect(day: date, sites: dict):
             parts = [fetch_day(c, day) for c in customers]
             kwh = round(sum(p[0] for p in parts), 1)
             n = min(p[1] for p in parts)
-            result[hq] = (kwh, n)
+            hourly, peak_kw = summarize_lp([p[2] for p in parts])
+            result[hq] = {"kwh": kwh, "count": n, "hourly": hourly, "peak_kw": peak_kw}
             warn = "" if n == 96 else f"  (15분 값 {n}/96개: 아직 덜 집계됨)"
-            print(f"  - {hq}: {kwh:,.1f} kWh{warn}")
+            print(f"  - {hq}: {kwh:,.1f} kWh · 최대수요 {peak_kw} kW{warn}")
         except Exception as e:  # 한 본부 실패가 전체를 멈추지 않도록
             failed += 1
             print(f"  ! {hq}: 실패 - {e}")
@@ -271,6 +326,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--date", help="수집할 날짜 YYYY-MM-DD")
     p.add_argument("--days", type=int, default=3, help="어제부터 거슬러 며칠을 다시 수집할지 (기본 3)")
+    p.add_argument("--from", dest="from_date", help="이 날짜부터 어제까지 모두 수집 (지난 기간 채우기용) YYYY-MM-DD")
     p.add_argument("--dry-run", action="store_true", help="시트에 쓰지 않고 결과만 출력")
     args = p.parse_args()
 
@@ -279,8 +335,13 @@ def main():
     mf_y, mf_m = map(int, monthly_from.split("-"))
 
     today = datetime.now(KST).date()
-    days = [date.fromisoformat(args.date)] if args.date else \
-           [today - timedelta(days=i) for i in range(args.days, 0, -1)]
+    if args.date:
+        days = [date.fromisoformat(args.date)]
+    elif args.from_date:
+        f = date.fromisoformat(args.from_date)
+        days = [f + timedelta(days=i) for i in range((today - f).days)]
+    else:
+        days = [today - timedelta(days=i) for i in range(args.days, 0, -1)]
     days = [d for d in days if d >= start]
     if not days:
         print(f"조회할 날짜가 없습니다 (정보제공 동의일 {start} 이후만 조회 가능)")
@@ -295,6 +356,7 @@ def main():
 
     doc = None if args.dry_run else get_doc()
     daily_ws = None if args.dry_run else get_or_create_daily_ws(doc)
+    hourly_ws = None if args.dry_run else get_or_create_ws(doc, HOURLY_TAB, HOURLY_HEADER)
     now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
 
     touched, ok_total, fail_total = set(), 0, 0
@@ -305,6 +367,7 @@ def main():
         fail_total += failed
         if values and not args.dry_run:
             upsert_daily(daily_ws, d, values, now_str)
+            upsert_hourly(hourly_ws, d, values, now_str)
             for hq in values:
                 touched.add(bill_month(meter_days, hq, d))
 
