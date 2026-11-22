@@ -391,12 +391,12 @@ def _font_path(cands):
     return None
 
 
-@st.cache_data(show_spinner=False, max_entries=64)
 def make_pdf(hq_disp, n_month, m, f, metric_label, unit, period_label, cmp_label, weekly, prof, comments, logo_path=None):
     import matplotlib
     matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from matplotlib import font_manager
+    import matplotlib.ticker
+    from matplotlib import font_manager, patches
+    from matplotlib.figure import Figure
     from matplotlib.backends.backend_pdf import PdfPages
 
     reg, bold = _font_path(FONT_CANDIDATES), _font_path(FONT_BOLD_CANDIDATES)
@@ -405,15 +405,15 @@ def make_pdf(hq_disp, n_month, m, f, metric_label, unit, period_label, cmp_label
         fam = font_manager.FontProperties(fname=reg).get_name()
         if bold:
             font_manager.fontManager.addfont(bold)
-        plt.rcParams["font.family"] = fam
-    plt.rcParams["axes.unicode_minus"] = False
+        matplotlib.rcParams["font.family"] = fam
+    matplotlib.rcParams["axes.unicode_minus"] = False
 
-    fig = plt.figure(figsize=(8.27, 11.69))  # A4
+    fig = Figure(figsize=(8.27, 11.69))  # A4 (pyplot 을 쓰지 않아 버튼 클릭 시 별도 스레드에서도 안전)
     W = fig.text
 
     # --- 머리글
-    fig.patches.append(plt.Rectangle((0, 0.945), 1, 0.055, transform=fig.transFigure, color=KPETRO_GRAY, zorder=0))
-    fig.patches.append(plt.Rectangle((0, 0.941), 1, 0.004, transform=fig.transFigure, color=KPETRO_GREEN, zorder=0))
+    fig.patches.append(patches.Rectangle((0, 0.945), 1, 0.055, transform=fig.transFigure, color=KPETRO_GRAY, zorder=0))
+    fig.patches.append(patches.Rectangle((0, 0.941), 1, 0.004, transform=fig.transFigure, color=KPETRO_GREEN, zorder=0))
     W(0.05, 0.965, f"{hq_disp} 에너지·자원 사용현황", fontsize=17, fontweight="bold", color="white", va="center")
     W(0.95, 0.965, "K-REMS", fontsize=12, fontweight="bold", color=KPETRO_GREEN, va="center", ha="right")
     W(0.05, 0.922, f"누계 기준: 2026년 1~{n_month}월   |   일별 조회: {period_label}   |   출력: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
@@ -517,7 +517,6 @@ def make_pdf(hq_disp, n_month, m, f, metric_label, unit, period_label, cmp_label
     buf = io.BytesIO()
     with PdfPages(buf) as pdf:
         pdf.savefig(fig)
-    plt.close(fig)
     return buf.getvalue()
 
 
@@ -587,7 +586,7 @@ def render(ctx):
     for col, (key, title, unit) in zip(gcols, specs):
         x = m[key]
         with col:
-            st.plotly_chart(ctx["make_gauge"](x["ytd"], x["target"], title, unit), use_container_width=True, key=f"hqd_g_{key}")
+            st.plotly_chart(ctx["make_gauge"](x["ytd"], x["target"], title, unit), width="stretch", key=f"hqd_g_{key}")
             share = x["ytd"] / total[key]["ytd"] * 100 if total[key]["ytd"] else 0
             st.markdown(
                 f"<div style='text-align:center; font-size:15px; margin-top:-10px'>"
@@ -623,7 +622,7 @@ def render(ctx):
             k4.metric(f"비교 기간 대비", f"{ch:+.1f}%", "같은 날짜끼리 비교", delta_color="off")
         else:
             k4.metric("비교 기간 대비", "-", "비교 데이터 없음", delta_color="off")
-        st.plotly_chart(daily_chart(f, metric_label, unit, cmp_label, weekly), use_container_width=True, key="hqd_daily")
+        st.plotly_chart(daily_chart(f, metric_label, unit, cmp_label, weekly), width="stretch", key="hqd_daily")
         legend = (f"🟩 평일 &nbsp; ⬜ 주말 &nbsp; 🟥 급증일(같은 요일 유형 중앙값의 {SPIKE_RATIO:.1f}배 초과) &nbsp; 🟧 {cmp_label}"
                   if not weekly else f"조회 기간이 {WEEKLY_THRESHOLD}일을 넘어 주 단위 합계로 표시합니다.")
         st.caption(legend)
@@ -636,7 +635,7 @@ def render(ctx):
     else:
         h1, h2 = st.columns([3, 1])
         with h1:
-            st.plotly_chart(hourly_chart(prof), use_container_width=True, key="hqd_hourly")
+            st.plotly_chart(hourly_chart(prof), width="stretch", key="hqd_hourly")
         with h2:
             r = prof["base_ratio"]
             st.metric("야간 대기전력 비율", f"{r:.0f}%" if r is not None else "-",
@@ -665,10 +664,9 @@ def render(ctx):
 
     # ---------------- ⑤ PDF
     st.markdown("<br>", unsafe_allow_html=True)
-    try:
-        pdf = make_pdf(hq_disp, n_month, m, f, metric_label, unit, period_label, cmp_label, weekly, prof, comments)
-        fname = f"{hq_disp}_에너지자원_사용현황_{start.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}.pdf"
-        st.download_button(f"📄 {hq_disp} 에너지·자원 사용현황 조회 (PDF 출력)", data=pdf, file_name=fname,
-                           mime="application/pdf", use_container_width=True, type="primary", key="hqd_pdf")
-    except Exception as e:
-        st.warning(f"PDF를 만드는 중 문제가 생겼습니다: {e}")
+    fname = f"{hq_disp}_에너지자원_사용현황_{start.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}.pdf"
+    # PDF 는 버튼을 누를 때만 만든다 (화면을 그릴 때마다 만들지 않아 조회가 빨라짐)
+    st.download_button(f"📄 {hq_disp} 에너지·자원 사용현황 조회 (PDF 출력)",
+                       data=lambda: make_pdf(hq_disp, n_month, m, f, metric_label, unit, period_label, cmp_label, weekly, prof, comments),
+                       file_name=fname, mime="application/pdf", width="stretch", type="primary",
+                       key="hqd_pdf", on_click="ignore")
