@@ -57,6 +57,16 @@ KST = timezone(timedelta(hours=9))
 OPM_URL = "https://opm.kepco.co.kr:11080/OpenAPI/getDayLpData.do"
 # pwr_qty0015, 0030, 0045, 0100, ... , 2345, 2400 (96개, 단위 kWh)
 LP_KEYS = [f"pwr_qty{(i*15)//60:02d}{(i*15)%60:02d}" for i in range(1, 97)]
+OPM_TIMEOUT = (10, 60)  # (접속, 응답) 초. 접속이 안 되면 10초 만에 포기
+FAIL_FAST_N = 3         # 실행 첫 요청 N개가 모두 접속 실패면 서버 장애로 보고 전체 중단
+
+
+class KepcoUnreachable(Exception):
+    """한전 서버에 접속 자체가 안 됨 -> 남은 본부/날짜도 모두 실패할 것이므로 실행 중단"""
+
+
+# 이번 실행의 첫 요청들 결과 (True = 접속 실패). FAIL_FAST_N 개까지만 기록
+_first_results = []
 
 
 def _num(v):
@@ -93,12 +103,17 @@ def fetch_day(customer_no: str, day: date):
         return round(sum(lp), 1), 96, lp
 
     import requests
-    resp = requests.get(OPM_URL, params={
-        "custNo": customer_no,
-        "date": day.strftime("%Y%m%d"),
-        "serviceKey": os.environ["KEPCO_API_KEY"].strip(),
-        "returnType": "02",  # JSON
-    }, timeout=60)
+    try:
+        resp = requests.get(OPM_URL, params={
+            "custNo": customer_no,
+            "date": day.strftime("%Y%m%d"),
+            "serviceKey": os.environ["KEPCO_API_KEY"].strip(),
+            "returnType": "02",  # JSON
+        }, timeout=OPM_TIMEOUT)
+    except requests.exceptions.ConnectionError:  # ConnectTimeout 포함
+        _record_first(True)
+        raise
+    _record_first(False)
     resp.raise_for_status()
     try:
         body = resp.json()
@@ -126,6 +141,15 @@ def fetch_day(customer_no: str, day: date):
     count = sum(v is not None for v in lp)
     total = sum(v for v in lp if v is not None)
     return round(total, 2), count, lp
+
+
+def _record_first(conn_failed: bool):
+    """첫 FAIL_FAST_N 개 요청이 모두 접속 실패면 KepcoUnreachable 발생"""
+    if len(_first_results) >= FAIL_FAST_N:
+        return
+    _first_results.append(conn_failed)
+    if len(_first_results) == FAIL_FAST_N and all(_first_results):
+        raise KepcoUnreachable(f"첫 요청 {FAIL_FAST_N}건이 모두 접속 실패/시간초과 ({OPM_URL})")
 
 
 def summarize_lp(lp_list):
@@ -316,6 +340,8 @@ def collect(day: date, sites: dict):
             result[hq] = {"kwh": kwh, "count": n, "hourly": hourly, "peak_kw": peak_kw}
             warn = "" if n == 96 else f"  (15분 값 {n}/96개: 아직 덜 집계됨)"
             print(f"  - {hq}: {kwh:,.1f} kWh · 최대수요 {peak_kw} kW{warn}")
+        except KepcoUnreachable:
+            raise  # 서버 장애: 다음 본부로 넘어가지 않고 실행 전체 중단
         except Exception as e:  # 한 본부 실패가 전체를 멈추지 않도록
             failed += 1
             print(f"  ! {hq}: 실패 - {e}")
@@ -362,7 +388,12 @@ def main():
     touched, ok_total, fail_total = set(), 0, 0
     for d in days:
         print(f"[{d}]")
-        values, failed = collect(d, sites)
+        try:
+            values, failed = collect(d, sites)
+        except KepcoUnreachable as e:
+            print(f"  ! {e}")
+            print(f"한전 서버 접속 불가로 수집 중단 (지금까지 성공 {ok_total}건). 오후 재실행 때 다시 시도합니다.")
+            sys.exit(1)
         ok_total += len(values)
         fail_total += failed
         if values and not args.dry_run:
