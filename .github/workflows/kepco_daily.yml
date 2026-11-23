@@ -3,6 +3,8 @@ name: 한전 전력사용량 자동 수집
 on:
   schedule:
     - cron: "7 21 * * *"   # 매일 오전 6:07 (한국시간)
+    - cron: "7 5 * * *"    # 매일 오후 2:07 (한국시간) 재수집. 아침에 한전 서버 장애였어도 채워짐
+                           # (날짜·본부별 덮어쓰기 + 최근 3일 재수집이라 두 번 돌아도 안전)
   workflow_dispatch:        # Actions 화면의 Run workflow 버튼으로 수동 실행
     inputs:
       date:
